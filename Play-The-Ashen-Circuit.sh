@@ -2,13 +2,13 @@
 # Run the adjacent AppImage without requiring a FUSE installation or mount.
 set -u
 launch_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-image="$launch_dir/The_Ashen_Circuit-1.2-x86_64.AppImage"
+image="$launch_dir/The_Ashen_Circuit-1.3-x86_64.AppImage"
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ashen-circuit"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/ashen-circuit/runtime"
 mkdir -p "$state_dir" "$cache_dir" || exit 1
 log="$state_dir/launcher.log"
 if [ ! -f "$image" ]; then
-    printf '%s\n' 'Keep this launcher next to The_Ashen_Circuit-1.2-x86_64.AppImage.' >&2
+    printf '%s\n' 'Keep this launcher next to The_Ashen_Circuit-1.3-x86_64.AppImage.' >&2
     exit 1
 fi
 if [ "$(uname -m)" != x86_64 ]; then

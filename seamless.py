@@ -44,6 +44,7 @@ class Pawn:
     moving: bool = False
     goal: tuple = field(default_factory=tuple)
     home: tuple = field(default_factory=tuple)
+    air: float = 0.
 
     @property
     def pos(self):
@@ -98,7 +99,7 @@ class WorldCombat:
 
     @property
     def busy(self):
-        return self.phase in ('forming','returning') or self.action is not None
+        return self.phase in ('forming','readying','returning') or self.action is not None
 
     def exits(self):
         destinations=self.links[self.g.room]
@@ -362,16 +363,20 @@ class WorldCombat:
         melee=command in MELEE and any(p.hero in (0,2) for p in actors)
         destinations=[]
         endings=[]
+        motions=[]
         for index,p in enumerate(actors):
             if melee and p.hero in (0,2):
                 side=-1 if p.x<target.x else 1
                 destinations.append(self.clamp_point((target.x+side*(23+index*6),target.y+4+index*9)))
-            else:destinations.append(self.clamp_point((p.x+(target.x-p.x)*.10,p.y-2)))
+                motions.append('jump' if distance(p.pos,target.pos)>=82 else 'run')
+            else:
+                destinations.append(self.clamp_point((p.x+(target.x-p.x)*.10,p.y-2)))
+                motions.append('cast')
             endings.append(self.landing(p,target,index))
         for p in actors:p.unit.atb=0
         self.action={'name':command,'actors':actors,'targets':targets,'starts':[p.pos for p in actors],
                      'destinations':destinations,'endings':endings,'elapsed':0.,'duration':1.7 if link else 1.3,
-                     'hit':False,'link':link,'enemy':False,'melee':melee,
+                     'hit':False,'link':link,'enemy':False,'melee':melee,'motions':motions,
                      'resolve':lambda: g.resolve_link(command) if link else g.resolve_command(hero,command)}
         self.phase='action';g.log=[command];g.log_wait=0
 
@@ -392,6 +397,7 @@ class WorldCombat:
         self.action={'name':name,'actors':[p],'targets':[target],'starts':[p.pos],
                      'destinations':[destination],'endings':[ending],'elapsed':0.,'duration':1.35 if special else 1.12,
                      'hit':False,'link':False,'enemy':True,'melee':melee,
+                     'motions':['run' if melee else 'cast'],
                      'resolve':lambda p=p,t=target:g.resolve_enemy_turn(p.unit,t.unit)}
         self.phase='action';g.log=[name]
 
@@ -451,15 +457,20 @@ class WorldCombat:
                     reached=p.step(p.goal,115*dt)
                     done=reached and done
                 if done:
-                    self.phase='idle'
+                    self.phase='readying';self.phase_time=0.
                     for p in self.heroes:
                         p.moving=False
                         p.home=p.pos
                         nearest=min(self.active.pawns,key=lambda e:distance(e.pos,p.pos))
                         p.direction=1 if nearest.x>p.x else 3
+                    g.log=['WEAPONS READY.']
+            elif self.phase=='readying':
+                self.phase_time+=dt
+                if self.phase_time>=.42:
+                    self.phase='idle'
                     g.log=['ACTIVE TIME: gauges are charging.']
             elif self.action:self.update_action(dt)
-            if g.state=='battle' and self.phase!='forming':
+            if g.state=='battle' and self.phase not in ('forming','readying'):
                 self.update_clocks(dt)
                 self.battle_roam(dt)
                 self.schedule_ready_enemy()
@@ -477,7 +488,7 @@ class WorldCombat:
         a=self.action
         a['elapsed']+=dt
         t=min(1,a['elapsed']/a['duration'])
-        for p,start,impact,end in zip(a['actors'],a['starts'],a['destinations'],a['endings']):
+        for p,start,impact,end,motion in zip(a['actors'],a['starts'],a['destinations'],a['endings'],a['motions']):
             if t<.34:
                 f=t/.34;source,destination=start,impact
             elif t<.64:
@@ -488,6 +499,7 @@ class WorldCombat:
             old=p.pos
             p.x=source[0]+(destination[0]-source[0])*f
             p.y=source[1]+(destination[1]-source[1])*f
+            p.air=math.sin(f*math.pi)*20 if motion=='jump' and t<.34 else 0
             p.moving=distance(old,p.pos)>.1
             if p.moving:p.direction=facing(old,p.pos)
             elif a['targets']:p.direction=facing(p.pos,a['targets'][0].pos)
@@ -504,7 +516,7 @@ class WorldCombat:
                     self.floaters.append({'pos':p.pos,'value':f'+{p.unit.mp-mp}MP','color':CYAN,'ttl':1.05})
         if t>=1:
             for p,end in zip(a['actors'],a['endings']):
-                p.x,p.y=end;p.home=end;p.goal=end;p.moving=False
+                p.x,p.y=end;p.home=end;p.goal=end;p.moving=False;p.air=0
             self.action=None;self.phase='idle'
             if self.g.state=='battle':
                 if a['enemy']:self.g.finish_enemy_action(a['actors'][0].unit)
@@ -717,21 +729,31 @@ class WorldCombat:
 
     def draw_pawn(self, p):
         g=self.g;s=g.canvas
-        x,y=int(p.x),int(p.y)
-        pygame.draw.ellipse(s,(16,24,28),(x-11,y-3,22,6))
+        x,ground_y=int(p.x),int(p.y)
+        y=ground_y-int(p.air)
+        pygame.draw.ellipse(s,(16,24,28),(x-11,ground_y-3,22,6))
         if p.hero>=0:
             if g.state=='battle' and p.hero==g.turn_actor and not self.busy:
-                pygame.draw.ellipse(s,ELEMENT_COLORS[p.hero],(x-12,y-4,24,7),1)
+                pygame.draw.ellipse(s,ELEMENT_COLORS[p.hero],(x-12,ground_y-4,24,7),1)
                 pygame.draw.polygon(s,GOLD,[(x-3,y-44),(x+3,y-44),(x,y-41)])
-            frame=int(self.clock*10)%8 if p.moving else 0
+            if p.air:
+                frame=2 if p.hero in (0,3) else 6
+            elif p.moving:
+                frame=int(self.clock*10)%8
+            elif g.state in ('battle','victory') and self.phase!='forming':
+                # Wide alternating poses read as a weapon-ready stance rather
+                # than the exploration sprite's feet-together idle.
+                frame=(2,6)[(int(self.clock*2.5)+p.hero)%2]
+                y-=1 if int(self.clock*5+p.hero)%2 else 0
+            else:frame=0
             if p.unit.alive():
                 g.draw_party_member(p.hero,x,y,p.direction,frame,.82)
-                self.draw_weapon(p)
+                self.draw_weapon(p,y)
             else:
                 # A consistent prone pose, not an abruptly missing party member.
                 src=g.party_sheet.subsurface(pygame.Rect(4*32,p.hero*48,32,48))
                 img=pygame.transform.rotate(pygame.transform.scale(src,(23,32)),90)
-                img.set_alpha(130);s.blit(img,(x-16,y-14))
+                img.set_alpha(130);s.blit(img,(x-16,ground_y-14))
         elif p.unit.alive():
             s.blit(self.enemy_image(p),(x-40,y-69))
             if g.state=='battle':
@@ -745,35 +767,38 @@ class WorldCombat:
                 pygame.draw.ellipse(s,RED,(x-14,y-4,28,8),1)
                 pygame.draw.polygon(s,WHITE,[(x-3,y-39),(x+3,y-39),(x,y-35)])
 
-    def draw_weapon(self,p):
-        """Weapons leave their resting poses during the actor's action."""
-        if not self.action or p not in self.action['actors'] or p.hero<0:return
-        progress=self.action['elapsed']/self.action['duration']
-        if progress<.12 or progress>.87:return
-        s=self.g.canvas;x,y=int(p.x),int(p.y);direction=p.direction
-        sign=1 if direction==1 else -1 if direction==3 else 1
-        hand=(x+sign*5,y-20)
+    def draw_weapon(self,p,y=None):
+        """Keep weapons visible in stance, then extend them through a strike."""
+        if self.g.state not in ('battle','victory') or self.phase=='forming' or p.hero<0:return
+        attacking=bool(self.action and p in self.action['actors'] and not self.action['enemy'])
+        progress=self.action['elapsed']/self.action['duration'] if attacking else 0
+        striking=attacking and .12<=progress<=.87
+        s=self.g.canvas;x=int(p.x);y=int(p.y-p.air) if y is None else int(y)
+        if attacking and self.action['targets']:
+            sign=1 if self.action['targets'][0].x>=p.x else -1
+        else:sign=1 if p.direction==1 else -1 if p.direction==3 else 1
+        hand=(x+sign*(6 if striking else 4),y-(21 if striking else 19))
         outline=(12,18,25)
         if p.hero==0:  # Rian's ice sword
-            tip=(hand[0]+sign*18,hand[1]-10)
+            tip=(hand[0]+sign*(18 if striking else 14),hand[1]-(10 if striking else 5))
             pygame.draw.line(s,outline,hand,tip,4);pygame.draw.line(s,(184,230,242),hand,tip,2)
             pygame.draw.line(s,CYAN,(hand[0]-sign*3,hand[1]-2),(hand[0]+sign*4,hand[1]+3),2)
         elif p.hero==1:  # Marek braces the rail-pistol with both hands
-            bx=hand[0] if sign>0 else hand[0]-15
-            pygame.draw.rect(s,outline,(bx-1,hand[1]-3,17,7))
-            pygame.draw.rect(s,(94,124,137),(bx,hand[1]-2,15,4))
-            pygame.draw.line(s,CYAN,(bx+2,hand[1]-1),(bx+14,hand[1]-1))
+            length=17 if striking else 14;bx=hand[0] if sign>0 else hand[0]-length
+            pygame.draw.rect(s,outline,(bx-1,hand[1]-3,length+2,7))
+            pygame.draw.rect(s,(94,124,137),(bx,hand[1]-2,length,4))
+            pygame.draw.line(s,CYAN,(bx+2,hand[1]-1),(bx+length-1,hand[1]-1))
             pygame.draw.rect(s,(64,84,91),(bx+5,hand[1]+2,4,5))
         elif p.hero==2:  # Tess draws both bio daggers
             for offset in (-3,5):
                 h=(hand[0]-sign*2,hand[1]+offset)
-                tip=(h[0]+sign*11,h[1]-4)
+                tip=(h[0]+sign*(11 if striking else 8),h[1]-(4 if striking else 2))
                 pygame.draw.line(s,outline,h,tip,3);pygame.draw.line(s,(135,222,142),h,tip,1)
         else:  # Brann shoulders the heavy grenade launcher
-            bx=hand[0] if sign>0 else hand[0]-18
-            pygame.draw.rect(s,outline,(bx-2,hand[1]-5,21,9))
-            pygame.draw.rect(s,(125,90,61),(bx,hand[1]-4,18,6))
-            pygame.draw.rect(s,(217,133,55),(bx+(14 if sign>0 else 1),hand[1]-3,5,4))
+            length=20 if striking else 17;bx=hand[0] if sign>0 else hand[0]-length
+            pygame.draw.rect(s,outline,(bx-2,hand[1]-5,length+3,9))
+            pygame.draw.rect(s,(125,90,61),(bx,hand[1]-4,length,6))
+            pygame.draw.rect(s,(217,133,55),(bx+(length-4 if sign>0 else 1),hand[1]-3,5,4))
             pygame.draw.line(s,(67,55,47),(x,hand[1]+1),(bx+8,hand[1]+7),3)
 
     def draw_scene(self, hud=True):
@@ -822,7 +847,8 @@ class WorldCombat:
                 travel=(t-.28)/.18
                 for source in a['actors']:
                     for target in a['targets']:
-                        start=(source.x,source.y-18);end=(target.x,target.y-15)
+                        start=(source.x,source.y-source.air-18)
+                        end=(target.x,target.y-target.air-15)
                         x=start[0]+(end[0]-start[0])*travel
                         y=start[1]+(end[1]-start[1])*travel
                         if source.hero==3 or a['name'] in ('Bomb','Plague Canister'):
@@ -883,76 +909,87 @@ class WorldCombat:
 
     def draw_battle_hud(self):
         g=self.g;s=g.canvas
-        pygame.draw.rect(s,(8,14,22),(0,0,320,20))
-        label(s,self.rooms[g.room][0],5,2,GOLD,limit=31)
-        label(s,'ACTIVE',278,2,CYAN)
         if self.targeting:
-            label(s,f'TARGET: {self.target.name}  HP {self.target.hp}/{self.target.maxhp}',5,11,RED,limit=50)
+            message=f'TARGET {self.target.name}  {self.target.hp}/{self.target.maxhp}'
+            message_color=RED
         else:
             message=g.log[-1] if g.log else 'CONTACT'
+            message_color=WHITE
             if g.state=='battle' and not self.busy and not g.submenu and g.cmd==1 and g.turn_actor>=0:
                 h=g.party[g.turn_actor]
                 message=h.skill+(' / FIND TOME' if not g.knows(h,h.skill) else ' / READY' if h.gauge>=100 else ' / RECHARGING')
-            label(s,message,5,11,WHITE,limit=50)
-        panel(s,(2,122,108,56))
-        panel(s,(112,122,206,56))
+        # Compact floating chips preserve the room behind them instead of
+        # covering the entire top fifth with an opaque debug-style banner.
+        panel(s,(3,3,236,14))
+        label(s,message,7,7,message_color,limit=37)
+        panel(s,(263,3,54,14),CYAN)
+        label(s,'ACTIVE',272,7,CYAN)
+
+        # One continuous lower plate, divided only where commands and party
+        # telemetry actually differ. Four tighter rows expose ten more pixels
+        # of the shared battlefield than the previous double-window layout.
+        panel(s,(2,132,316,46))
+        pygame.draw.line(s,(67,84,95),(105,133),(105,177))
         for i,h in enumerate(g.party):
-            y=126+i*12
+            y=136+i*10
             col=WHITE if h.alive() else MUTED
-            if i==g.turn_actor and g.state=='battle':label(s,'>',116,y,GOLD)
-            label(s,h.name,124,y,col,limit=5)
-            label(s,f'{h.hp}/{h.maxhp}',157,y,col,limit=7)
-            label(s,f'M{h.mp}',202,y,CYAN if h.alive() else MUTED,limit=4)
-            pygame.draw.rect(s,(29,42,51),(229,y,82,7))
-            pygame.draw.rect(s,(63,78,87),(230,y+1,80,5))
-            fill=int(80*h.atb/100) if h.alive() else 0
-            if fill:pygame.draw.rect(s,ELEMENT_COLORS[i],(230,y+1,fill,5))
+            if i==g.turn_actor and g.state=='battle':label(s,'>',109,y,GOLD)
+            label(s,h.name,117,y,col,limit=5)
+            label(s,f'H{h.hp}',150,y,col,limit=5)
+            label(s,f'M{h.mp}',181,y,CYAN if h.alive() else MUTED,limit=4)
+            pygame.draw.rect(s,(29,42,51),(207,y,105,7))
+            pygame.draw.rect(s,(63,78,87),(208,y+1,103,5))
+            fill=int(103*h.atb/100) if h.alive() else 0
+            if fill:pygame.draw.rect(s,ELEMENT_COLORS[i],(208,y+1,fill,5))
             if h.atb>=100 and h.alive():
-                pygame.draw.rect(s,WHITE,(229,y,82,7),1)
+                pygame.draw.rect(s,WHITE,(207,y,105,7),1)
                 if h.gauge>=100:pygame.draw.rect(s,GOLD,(307,y+2,3,3))
         if g.state=='victory':
-            label(s,'VICTORY',8,129,GOLD,scale=2)
-            label(s,'A: CONTINUE',8,158,WHITE)
+            label(s,'VICTORY',8,137,GOLD)
+            label(s,'A CONTINUE',8,158,WHITE)
             return
         if self.phase=='forming':
-            label(s,'CONTACT',8,129,GOLD)
-            label(s,'TAKING POSITIONS',8,143,WHITE)
+            label(s,'CONTACT',8,137,GOLD)
+            label(s,'FORMING UP',8,152,WHITE)
+            return
+        if self.phase=='readying':
+            label(s,'READY',8,137,GOLD)
+            label(s,'DRAW WEAPONS',8,152,WHITE)
             return
         if self.action:
-            label(s,'ACTION',8,128,RED if self.action['enemy'] else GOLD)
+            label(s,'ACTION',8,136,RED if self.action['enemy'] else GOLD)
             words=self.action['name'].split();lines=['']
             for word in words:
                 if len(lines[-1])+len(word)+1>16:lines.append(word)
                 else:lines[-1]=(lines[-1]+' '+word).strip()
-            for n,line in enumerate(lines[:3]):label(s,line,8,141+n*10,WHITE,limit=16)
+            for n,line in enumerate(lines[:2]):label(s,line,8,150+n*10,WHITE,limit=16)
             return
         if self.targeting:
-            label(s,'CHOOSE TARGET',8,128,RED)
-            label(s,'D-PAD CYCLE',8,143,WHITE)
-            label(s,'A GO  B BACK',8,158,WHITE)
+            label(s,'TARGET',8,136,RED)
+            label(s,'D-PAD CYCLE',8,150,WHITE)
+            label(s,'A GO B BACK',8,161,WHITE)
             return
         if g.turn_actor<0:
-            label(s,'ACTIVE TIME',8,128,CYAN)
-            label(s,'GAUGES FILL',8,143,WHITE)
-            label(s,'ENEMIES MOVE',8,158,RED)
+            label(s,'ACTIVE TIME',8,137,CYAN)
+            label(s,'TIME FLOWS',8,152,WHITE)
             return
         hero=g.party[g.turn_actor]
         if g.submenu:
-            panel(s,(2,122,316,56))
+            panel(s,(2,121,316,57))
             opts=g.get_submenu(hero)
             page=g.target//6
-            label(s,f'{g.submenu} {page+1}/{max(1,(len(opts)+5)//6)}',8,126,GOLD)
-            label(s,'A SELECT  B BACK',212,126,MUTED)
+            label(s,f'{g.submenu} {page+1}/{max(1,(len(opts)+5)//6)}',8,125,GOLD)
+            label(s,'A SELECT  B BACK',212,125,MUTED)
             for index,opt in enumerate(opts[page*6:page*6+6],page*6):
                 local=index-page*6;col=local//3;row=local%3
                 color=GOLD if index==g.target else WHITE
                 if g.submenu=='Arts' and (opt.startswith('(') or int(opt.rsplit(' ',1)[1][:-2])>hero.mp):color=MUTED
-                label(s,('>' if index==g.target else ' ')+opt,7+col*157,139+row*11,color,limit=25)
+                label(s,('>' if index==g.target else ' ')+opt,7+col*157,138+row*11,color,limit=25)
             return
-        label(s,hero.name+' READY',8,127,GOLD)
+        label(s,hero.name+' READY',8,136,GOLD)
         short=['ATTACK','SKILL','ARTS','LINK','ITEM','DEFEND']
         for i,name in enumerate(short):
             row=i%3;col=i//3
             disabled=(i==1 and (hero.gauge<100 or not g.knows(hero,hero.skill))) or (i==2 and not g.known_arts(hero)) or (i==3 and not g.ready_links())
             color=MUTED if disabled else GOLD if i==g.cmd else WHITE
-            label(s,('>' if i==g.cmd else ' ')+name,6+col*52,141+row*11,color)
+            label(s,('>' if i==g.cmd else ' ')+name,6+col*49,149+row*9,color)

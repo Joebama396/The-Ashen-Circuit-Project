@@ -7,7 +7,7 @@ the final dragon fight.
 
 ## Play on Ubuntu
 
-Download and extract `The_Ashen_Circuit-1.2-Ubuntu.zip`. It already contains the
+Download and extract `The_Ashen_Circuit-1.3-Ubuntu.zip`. It already contains the
 matching AppImage and launcher. Open a terminal in the extracted folder and run:
 
 ```sh
@@ -22,11 +22,11 @@ in your file manager, if that option is available.
 The AppImage can be run directly without FUSE too:
 
 ```sh
-chmod +x ./The_Ashen_Circuit-1.2-x86_64.AppImage
-./The_Ashen_Circuit-1.2-x86_64.AppImage --appimage-extract-and-run
+chmod +x ./The_Ashen_Circuit-1.3-x86_64.AppImage
+./The_Ashen_Circuit-1.3-x86_64.AppImage --appimage-extract-and-run
 ```
 
-An alternative download, `The_Ashen_Circuit-1.2-Linux-Portable.tar.gz`, contains the
+An alternative download, `The_Ashen_Circuit-1.3-Linux-Portable.tar.gz`, contains the
 same game already unpacked. Extract it, open the `The-Ashen-Circuit` folder, and
 run `AppRun` (or `sh ./AppRun` in a terminal). Keep its files together.
 
@@ -53,6 +53,12 @@ is no separate arena, camera cut, or sprite swap. Every party member has a visib
 colored ATB bar in the lower-right panel. A white outline and selection arrow
 mean that character is ready for input. LB/RB switches between ready characters.
 
+After forming up, each character visibly draws their designated weapon and enters
+an animated, wide-footed combat stance. Sword and dagger attacks choose their
+approach from the live distance to the target: a nearby enemy gets a grounded
+rush, while a distant enemy triggers an arcing jump attack with a separate ground
+shadow. Both arrive at the same real impact frame and end in a new arena position.
+
 Time remains active during command and target selection. Enemies fill their own
 gauges, choose targets, and attack without waiting for the player. Sword and
 dagger users draw their weapons and close the distance; Marek braces and fires a
@@ -60,6 +66,16 @@ visible rail-pistol projectile; Brann shoulders his launcher and arcs grenades.
 Actors run to impact positions, then take new positions instead of snapping back
 to a fixed formation. The rest of the party and the enemies keep shifting around
 the shared room between attacks.
+
+The lower HUD is one compact plate instead of two bulky windows. It keeps all four
+HP, MP, and active-time rows visible while returning ten native pixels to the
+battlefield. Battle messages and the ACTIVE indicator now float in small chips
+over the room rather than occupying a full-width top banner.
+
+The supplied `Battle Theme 1` is the only music track in this build. It begins at
+enemy contact, loops for the duration of combat, and stops immediately when the
+last enemy is defeated. The victory screen is intentionally silent until a
+separate fanfare exists.
 
 Normal patrols return when you leave and re-enter their rooms. Repair Drones
 always drop a Potion, allowing supply farming. Bosses and treasure do not respawn.
@@ -142,7 +158,8 @@ enemies, A/Z confirms, and B/X cancels. Menus pause exploration and patrols.
 
 ## Files and saves
 
-The AppImage contains code, Python, libraries, music generation, and sprite data.
+The AppImage contains code, Python, libraries, the supplied battle theme, and
+sprite data.
 It writes these files in your home folder:
 
 - `~/.local/share/ashen-circuit/save.json`: progress, learned tomes, chest state,
@@ -177,8 +194,8 @@ If dependencies are installed in the local `vendor` folder, prepend
 `dist/`. The build produces an AppImage, a FUSE-bypass launcher, and an extracted
 portable archive. Tests use temporary saves and SDL dummy devices. They cover
 seamless rendering, contact, targeting, movement, all Arts/Links, every room,
-controller inputs, active enemy clocks, finite treasure, stat effects, save
-migration, and bosses.
+controller inputs, active enemy clocks, distance-selected run/jump attacks,
+battle-music lifecycle, finite treasure, stat effects, save migration, and bosses.
 
 Run `python3 tools/preview_seamless.py --video` for staged gameplay PNGs and an
 optional MP4. Run `python3 tools/preview_progression.py` for treasure and growth

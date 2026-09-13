@@ -127,6 +127,46 @@ class SeamlessTests(unittest.TestCase):
         self.assertNotEqual(start,pawn.pos)
         self.assertTrue(0<hero.atb<60)
 
+    def test_melee_uses_ground_rush_nearby_and_jump_attack_at_range(self):
+        g=self.battle();hero=g.party[0];pawn=g.world.heroes[0]
+        target=g.world.active.pawns[0]
+        target.x,target.y=220,90;target.home=target.pos
+        pawn.x,pawn.y=170,90;pawn.home=pawn.pos;hero.atb=100
+        g.world.target=target.unit;g.world.queue_action(hero,'Attack')
+        self.assertEqual(['run'],g.world.action['motions'])
+        self.settle()
+
+        pawn.x,pawn.y=80,90;pawn.home=pawn.pos;hero.atb=100
+        target.unit.hp=target.unit.maxhp
+        for e in g.enemies:e.atb=0
+        g.world.target=target.unit;g.world.queue_action(hero,'Attack')
+        self.assertEqual(['jump'],g.world.action['motions'])
+        g.world.update(.1)
+        self.assertGreater(pawn.air,6)
+        self.settle()
+
+    def test_idle_battle_pose_differs_from_exploration_and_draws_weapon(self):
+        g=self.battle();pawn=g.world.heroes[0]
+        pawn.moving=False;g.turn_actor=-1
+        g.canvas.fill((0,0,0,0));g.state='field';g.world.draw_pawn(pawn)
+        field=pygame.image.tostring(g.canvas,'RGBA')
+        g.canvas.fill((0,0,0,0));g.state='battle';g.world.phase='idle';g.world.draw_pawn(pawn)
+        stance=pygame.image.tostring(g.canvas,'RGBA')
+        self.assertNotEqual(field,stance)
+
+    def test_battle_track_starts_on_contact_and_stops_on_final_enemy(self):
+        g=self.field();g.music_ready=True
+        with patch.object(pygame.mixer.music,'play') as play, \
+             patch.object(pygame.mixer.music,'stop') as stop:
+            patrol=g.world.patrols[0];g.world.contact=patrol
+            g.start_battle([p.unit.key for p in patrol.pawns])
+            play.assert_called_once_with(-1)
+            started_stops=stop.call_count
+            for enemy in g.enemies:enemy.hp=0
+            g.check_battle()
+            self.assertEqual(started_stops+1,stop.call_count)
+            self.assertFalse(g.battle_music_playing)
+
     def test_controller_selects_a_different_visible_target(self):
         g=self.battle()
         g.event(pygame.event.Event(pygame.JOYBUTTONDOWN,button=0))

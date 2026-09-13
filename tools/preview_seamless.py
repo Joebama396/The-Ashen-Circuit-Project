@@ -65,12 +65,26 @@ def main():
             frame()
         if g.state!='battle':raise RuntimeError('Demo never made contact')
         while g.world.busy:frame()
+        frame(4)
+        snap('47_battle_stances.png')
         while g.turn_actor<0:frame()
         frame(12)
         snap('39_seamless_battle.png')
         confirm();frame(6);confirm()
         while g.world.action and g.world.action['elapsed']/g.world.action['duration']<.54:frame()
         snap('40_seamless_melee.png')
+        while g.world.busy:frame()
+        frame(10)
+        # Force a long melee approach to demonstrate the distance-selected
+        # arcing jump attack separately from the nearby ground rush above.
+        rian=g.world.heroes[0]
+        jump_target=next(p for p in g.world.active.pawns if p.unit.alive())
+        rian.x,rian.y=72,106;rian.home=rian.pos
+        jump_target.x,jump_target.y=231,91;jump_target.home=jump_target.pos
+        g.party[0].atb=100;g.turn_actor=0
+        g.execute(g.party[0],'Attack');confirm()
+        while g.world.action and g.world.action['elapsed']/g.world.action['duration']<.17:frame()
+        snap('48_jump_attack.png')
         while g.world.busy:frame()
         frame(10)
         # Use the real target picker, then the real queued rail-pistol action.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, json, math, random, array
+import os, sys, json, math, random
 from pathlib import Path
 import pygame
 from seamless import WorldCombat
@@ -105,7 +105,7 @@ FORMATIONS=[['scout','drone'],['mite','mite','drone'],['guard','scout'],['wisp',
 
 class Game(ProgressionMixin):
  def __init__(self):
-  pygame.mixer.pre_init(22050,-16,1,256); pygame.init()
+  pygame.mixer.pre_init(48000,-16,2,512); pygame.init()
   self.full=False; self.screen=pygame.display.set_mode((W*SCALE,H*SCALE));pygame.display.set_caption('The Ashen Circuit')
   self.canvas=pygame.Surface((W,H)); self.clock=pygame.time.Clock()
   self.font=pygame.font.Font(None,12);self.small=pygame.font.Font(None,10);self.tiny=pygame.font.Font(None,9);self.big=pygame.font.Font(None,22)
@@ -120,9 +120,10 @@ class Game(ProgressionMixin):
   self.stars=[(random.randrange(W),random.randrange(H),random.choice([1,1,2])) for _ in range(80)]
   self.joy=None;self.axis_latch=[0,0];self.pad_buttons=set()
   if pygame.joystick.get_count(): self.connect_controller(0)
-  self.music=None
-  try:self.music=self.make_music();self.music.play(-1)
-  except pygame.error:pass
+  self.music_ready=False;self.battle_music_playing=False
+  self.battle_music_path=resource_path('assets/audio/battle_theme_1.mp3')
+  try:self.make_music()
+  except (pygame.error,OSError):pass
   self.world=WorldCombat(self,ROOMS,LINKS,LOCKS,Enemy,LINKS_TECH)
 
  def connect_controller(self,index=0):
@@ -134,15 +135,19 @@ class Game(ProgressionMixin):
   return self.event(pygame.event.Event(pygame.KEYDOWN,key=key))
 
  def make_music(self):
-  # Procedural two-voice chiptune loop: no external samples or copyrighted melody.
-  rate=22050; beat=.18; melody=[45,48,52,50,45,43,40,43,45,52,55,52,48,45,43,40]
-  bass=[33,33,36,36,29,29,31,31]*2; samples=array.array('h')
-  for note,bn in zip(melody,bass):
-   frames=int(rate*beat);f=440*2**((note-69)/12);bf=440*2**((bn-69)/12)
-   for i in range(frames):
-    env=min(1,i/180)*min(1,(frames-i)/500);a=1 if (i*f/rate)%1<.5 else -1;b=1 if (i*bf/rate)%1<.5 else -1
-    samples.append(int((a*1800+b*850)*env))
-  return pygame.mixer.Sound(buffer=samples)
+  pygame.mixer.music.load(str(self.battle_music_path))
+  self.music_ready=True
+
+ def start_battle_music(self):
+  if not self.music_ready:return
+  pygame.mixer.music.stop()
+  pygame.mixer.music.play(-1)
+  self.battle_music_playing=True
+
+ def stop_battle_music(self):
+  if not self.battle_music_playing:return
+  pygame.mixer.music.stop()
+  self.battle_music_playing=False
 
  def save(self):
   if self.state=='battle': return
@@ -157,6 +162,7 @@ class Game(ProgressionMixin):
   self.toast='Game saved';self.toast_t=100
 
  def load(self):
+  self.stop_battle_music()
   try:
    d=json.loads(SAVE.read_text());self.room=d['room'];self.prev=d.get('prev');self.px=d.get('px',160);self.py=d.get('py',110)
    self.flags=set(d['flags']);self.open_locks={tuple(x) for x in d['locks']};self.keys=d['keys'];self.gold=d['gold'];self.items=d['items'];self.weapon=d['weapon'];self.armor=d['armor'];self.playtime=d['playtime']
@@ -180,6 +186,7 @@ class Game(ProgressionMixin):
    self.state='title';self.toast='Save could not be read. N: new game.';self.toast_t=600
 
  def new_game(self):
+  self.stop_battle_music()
   self.__dict__.update(room='gate',prev=None,px=160,py=110,flags=set(),open_locks=set(),keys=0,gold=0,items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1},weapon=0,armor=0,playtime=0,party=new_party(),state='field')
   self.init_progression();self.world.reset()
   self.start_dialog(STORY['gate']+[('RIAN','Four training caches by the entrance. Take the tomes before we meet the patrols.'),('SYSTEM','Approach a chest and press A / Z. Tomes teach techniques; stat items are assigned in Items & Growth.')]);self.flags.add('seen_gate')
@@ -213,6 +220,7 @@ class Game(ProgressionMixin):
 
  def start_battle(self,keys,boss=None):
   self.world.begin(keys,boss)
+  self.start_battle_music()
 
  def field_input(self,e):
   if e.type==pygame.KEYDOWN:
@@ -483,11 +491,12 @@ class Game(ProgressionMixin):
  def check_battle(self):
   if self.state!='battle':return
   if not any(e.alive() for e in self.enemies):
+   self.stop_battle_music()
    reward=sum(e.maxhp//5 for e in self.enemies);self.gold+=reward
    if any(e.key=='drone' for e in self.enemies) or random.random()<.42:self.items['Potion']+=1;drop=' Potion found.'
    else:drop=''
    self.log=[f'Victory! {reward} gil in usable parts.{drop}'];self.log_wait=100;self.state='victory';return
-  if not any(h.alive() for h in self.party):self.state='gameover'
+  if not any(h.alive() for h in self.party):self.stop_battle_music();self.state='gameover'
 
  def end_victory(self):
   if self.world.busy:return
@@ -672,6 +681,7 @@ def smoke_test(g):
  enemy=g.world.patrols[0].pawns[0]
  g.px,g.py=enemy.pos;g.world.grace=0;g.world.update(1/60)
  assert g.state=='battle', 'Visible contact did not start combat'
+ assert g.music_ready and g.battle_music_playing, 'Supplied battle theme did not start'
  for _ in range(600):
   g.world.update(1/60)
   if not g.world.busy:break
@@ -696,6 +706,9 @@ def smoke_test(g):
   g.world.update(1/60)
   if sum(h.hp for h in g.party)<before:break
  assert sum(h.hp for h in g.party)<before, 'Enemy active-time attack did not fire'
+ for foe in g.enemies:foe.hp=0
+ g.check_battle()
+ assert not g.battle_music_playing, 'Battle theme continued after the final enemy fell'
  # Exercise real treasure, controller menus, and persistence against a temporary
  # save, never against the player's data.
  import tempfile
@@ -716,7 +729,7 @@ def smoke_test(g):
    g.load();assert g.party[0].pow==old+1, 'Permanent growth did not survive loading'
    g.state='bag';g.draw()
   finally:SAVE=original_save
- print('SMOKE OK: motion sprites, active-time allies/enemies, persistent movement, readable HUD, tomes, Xbox menus, saves')
+ print('SMOKE OK: battle stances, active time, supplied music lifecycle, motion sprites, readable HUD, tomes, Xbox menus, saves')
  pygame.quit()
 
 if __name__=='__main__':
