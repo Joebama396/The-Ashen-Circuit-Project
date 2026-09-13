@@ -67,6 +67,20 @@ Actors run to impact positions, then take new positions instead of snapping back
 to a fixed formation. The rest of the party and the enemies keep shifting around
 the shared room between attacks.
 
+The field menu includes an **Active / Wait** battle-mode setting. Active retains
+continuous gauges. Wait freezes every party ATB, enemy ATB, and hidden personal
+recharge while an Arts or Link submenu is open. Enemy animations no longer take
+ownership of the player's command interface: open menus remain visible and
+navigable, and a command confirmed during an enemy animation is queued to begin
+as soon as that animation finishes.
+
+Every party pawn exposes a named animation state and frame. Exploration sets
+`moving_up`, `moving_down`, `moving_left`, or `moving_right` while cycling the
+eight arm-sway walk frames. Rian's and Tess's shared agile-melee profile triggers
+`jump_start`, `mid_air`, and `land_attack` in sequence. Marek's rail-medic profile
+uses `ready_stance` at full ATB and `recoil` after firing; Brann's distinct
+grenadier profile uses a heavier braced `ready_stance` and `heavy_recoil`.
+
 The lower HUD is one compact plate instead of two bulky windows. It keeps all four
 HP, MP, and active-time rows visible while returning ten native pixels to the
 battlefield. Battle messages and the ACTIVE indicator now float in small chips

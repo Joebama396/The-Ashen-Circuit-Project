@@ -113,6 +113,7 @@ class Game(ProgressionMixin):
   self.state='title';self.party=new_party();self.room='gate';self.prev=None;self.px,self.py=160,110;self.facing=0
   self.flags=set();self.open_locks=set();self.keys=0;self.gold=0;self.items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1}
   self.weapon=0;self.armor=0;self.steps=0;self.dialog=[];self.dindex=0;self.room_menu=0
+  self.battle_mode='Active'
   self.enemies=[];self.turn_actor=-1;self.cmd=0;self.submenu=None;self.target=0;self.log=[];self.log_wait=0;self.boss=None
   self.manual_page=0;self.manual_type='party'
   self.treasure=make_treasure(ROOMS);self.init_progression()
@@ -154,6 +155,7 @@ class Game(ProgressionMixin):
   SAVE.parent.mkdir(parents=True,exist_ok=True)
   data={'room':self.room,'prev':self.prev,'px':self.px,'py':self.py,'flags':list(self.flags),'locks':[list(x) for x in self.open_locks],
    'keys':self.keys,'gold':self.gold,'items':self.items,'weapon':self.weapon,'armor':self.armor,'playtime':self.playtime,
+   'battle_mode':self.battle_mode,
    'party':[{'hp':h.hp,'mp':h.mp,'gauge':h.gauge,'buffs':h.buffs,
              'stats':{stat:getattr(h,stat) for stat in STATS}} for h in self.party],
    'learned_tomes':sorted(self.learned),'opened_chests':sorted(self.opened_chests),
@@ -166,6 +168,7 @@ class Game(ProgressionMixin):
   try:
    d=json.loads(SAVE.read_text());self.room=d['room'];self.prev=d.get('prev');self.px=d.get('px',160);self.py=d.get('py',110)
    self.flags=set(d['flags']);self.open_locks={tuple(x) for x in d['locks']};self.keys=d['keys'];self.gold=d['gold'];self.items=d['items'];self.weapon=d['weapon'];self.armor=d['armor'];self.playtime=d['playtime']
+   self.battle_mode=d.get('battle_mode','Active') if d.get('battle_mode','Active') in ('Active','Wait') else 'Active'
    self.party=new_party();self.init_progression()
    for h,v in zip(self.party,d['party']):
     for stat,value in v.get('stats',{}).items():
@@ -252,7 +255,8 @@ class Game(ProgressionMixin):
   self.world.field_move(dx,dy)
 
  def battle_input(self,e):
-  if self.world.busy:return
+  if self.world.pending_player:return
+  if self.world.busy and not self.world.enemy_action_active:return
   if self.world.target_input(e):return
   alive=[h for h in self.party if h.alive()]
   if not alive:return
@@ -512,7 +516,7 @@ class Game(ProgressionMixin):
 
  def menu_input(self,e):
   if e.type!=pygame.KEYDOWN:return
-  opts=['Items & Growth','Party & Arts','Link Manual','Save','Return to field','Quit to title']
+  opts=self.menu_options()
   if e.key in (pygame.K_UP,pygame.K_w):self.room_menu=(self.room_menu-1)%len(opts)
   elif e.key in (pygame.K_DOWN,pygame.K_s):self.room_menu=(self.room_menu+1)%len(opts)
   elif e.key in (pygame.K_ESCAPE,pygame.K_x):self.state='field'
@@ -521,9 +525,16 @@ class Game(ProgressionMixin):
    if c=='Items & Growth':self.state='bag';self.bag_hero=None;self.bag_confirm=False;self.bag_message=''
    elif c=='Party & Arts':self.manual_type='party';self.manual_page=0;self.state='manual'
    elif c=='Link Manual':self.manual_type='links';self.manual_page=0;self.state='manual'
+   elif c.startswith('Battle Mode:'):
+    self.battle_mode='Wait' if self.battle_mode=='Active' else 'Active'
+    self.toast=f'Battle mode: {self.battle_mode}';self.toast_t=120
    elif c=='Save':self.state='field';self.save()
    elif c=='Return to field':self.state='field'
    elif c=='Quit to title':self.state='title'
+
+ def menu_options(self):
+  return ['Items & Growth','Party & Arts','Link Manual',f'Battle Mode: {self.battle_mode}',
+          'Save','Return to field','Quit to title']
 
  def event(self,e):
   if e.type==pygame.QUIT:return False
@@ -637,8 +648,8 @@ class Game(ProgressionMixin):
  def draw_menu(self):
   self.draw_room();panel(self.canvas,(8,25,304,148))
   label(self.canvas,'FIELD MENU',18,34,GOLD,scale=2)
-  opts=['Items & Growth','Party & Arts','Link Manual','Save','Return to field','Quit to title']
-  for i,o in enumerate(opts):label(self.canvas,('> ' if i==self.room_menu else '  ')+o,18,58+i*15,GOLD if i==self.room_menu else WHITE)
+  opts=self.menu_options()
+  for i,o in enumerate(opts):label(self.canvas,('> ' if i==self.room_menu else '  ')+o,18,56+i*14,GOLD if i==self.room_menu else WHITE)
   label(self.canvas,f'WEAPON {self.weapon}/2',179,61,CYAN)
   label(self.canvas,f'ARMOR  {self.armor}/2',179,74,CYAN)
   label(self.canvas,f'TOMES  {len(self.learned)}/{len(ALL_TOMES)}',179,91,WHITE)

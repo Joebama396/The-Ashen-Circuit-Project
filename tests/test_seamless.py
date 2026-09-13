@@ -142,8 +142,47 @@ class SeamlessTests(unittest.TestCase):
         g.world.target=target.unit;g.world.queue_action(hero,'Attack')
         self.assertEqual(['jump'],g.world.action['motions'])
         g.world.update(.1)
+        self.assertEqual('jump_start',pawn.animation_state)
+        self.assertEqual(0,pawn.air)
+        g.world.update(.13)
+        self.assertEqual('mid_air',pawn.animation_state)
         self.assertGreater(pawn.air,6)
+        g.world.update(.30)
+        self.assertEqual('land_attack',pawn.animation_state)
         self.settle()
+
+    def test_overworld_sets_four_directional_moving_states_and_sway_frames(self):
+        g=self.field();g.world.grace=100
+        pawn=g.world.heroes[0]
+        for direction,(dx,dy),state in (
+            (0,(0,-3),'moving_up'),(2,(0,3),'moving_down'),
+            (3,(-3,0),'moving_left'),(1,(3,0),'moving_right')):
+            with self.subTest(state=state):
+                g.facing=direction;g.px=pawn.x+dx;g.py=pawn.y+dy
+                g.world.update(1/60)
+                self.assertEqual(state,pawn.animation_state)
+        first=pawn.animation_frame
+        g.px=pawn.x+3;g.facing=1;g.world.update(.12)
+        self.assertEqual('moving_right',pawn.animation_state)
+        self.assertNotEqual(first,pawn.animation_frame)
+
+    def test_character_profiles_and_ranged_ready_recoil_states(self):
+        g=self.battle()
+        rian,marek,tess,brann=g.world.heroes
+        self.assertIs(rian.profile,tess.profile)
+        self.assertEqual('agile_melee',rian.profile.name)
+        self.assertEqual('rail_medic',marek.profile.name)
+        self.assertEqual('grenadier',brann.profile.name)
+
+        for pawn,state in ((marek,'recoil'),(brann,'heavy_recoil')):
+            for e in g.enemies:e.atb=0
+            pawn.unit.atb=100;g.world.target=g.world.active.pawns[0].unit
+            g.world.queue_action(pawn.unit,'Attack')
+            g.world.update(g.world.action['duration']*.31)
+            self.assertEqual(state,pawn.animation_state)
+            self.settle()
+            pawn.unit.atb=100;g.world.update(1/60)
+            self.assertEqual('ready_stance',pawn.animation_state)
 
     def test_idle_battle_pose_differs_from_exploration_and_draws_weapon(self):
         g=self.battle();pawn=g.world.heroes[0]
@@ -218,6 +257,68 @@ class SeamlessTests(unittest.TestCase):
             if sum(h.hp for h in g.party)<before:break
         self.assertTrue(any(h.hp<h.maxhp for h in g.party))
         self.assertTrue(any(e.turn>0 for e in g.enemies))
+
+    def test_enemy_animation_preserves_and_accepts_submenu_navigation(self):
+        g=self.battle();g.submenu='Arts';g.target=0
+        enemy=g.world.active.pawns[0];enemy.unit.atb=100
+        with patch('random.choice',return_value=g.world.heroes[3]):
+            g.world.schedule_ready_enemy()
+        self.assertTrue(g.world.enemy_action_active)
+        g.battle_input(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_DOWN))
+        self.assertEqual('Arts',g.submenu)
+        self.assertEqual(1,g.target)
+        self.assertEqual(0,g.turn_actor)
+        g.draw()
+        self.settle()
+        self.assertEqual('Arts',g.submenu)
+        self.assertEqual(1,g.target)
+        self.assertEqual(0,g.turn_actor)
+
+    def test_player_choice_during_enemy_animation_is_buffered_not_lost(self):
+        g=self.battle();hero=g.party[0];g.submenu='Arts';g.target=0
+        target=g.world.active.pawns[0];before=target.unit.hp
+        attacker=g.world.active.pawns[1];attacker.unit.atb=100
+        with patch('random.choice',return_value=g.world.heroes[3]):
+            g.world.schedule_ready_enemy()
+        confirm=pygame.event.Event(pygame.KEYDOWN,key=pygame.K_z)
+        g.battle_input(confirm)
+        self.assertIsNotNone(g.world.targeting)
+        g.battle_input(confirm)
+        self.assertEqual('Frost Edge',g.world.pending_player['command'])
+        self.settle()
+        self.assertIsNone(g.world.pending_player)
+        self.assertLess(target.unit.hp,before)
+
+    def test_wait_mode_freezes_arts_and_link_clocks_only(self):
+        g=self.battle();g.battle_mode='Wait'
+        for submenu in ('Arts','Link'):
+            with self.subTest(submenu=submenu):
+                g.submenu=submenu
+                for i,h in enumerate(g.party):h.atb=40+i;h.gauge=30+i
+                for i,e in enumerate(g.enemies):e.atb=20+i
+                before=([h.atb for h in g.party],[h.gauge for h in g.party],
+                        [e.atb for e in g.enemies])
+                g.world.update(.5)
+                self.assertEqual(before,([h.atb for h in g.party],
+                                         [h.gauge for h in g.party],
+                                         [e.atb for e in g.enemies]))
+        g.submenu='Item'
+        before=[h.atb for h in g.party]+[e.atb for e in g.enemies]
+        g.world.update(.5)
+        after=[h.atb for h in g.party]+[e.atb for e in g.enemies]
+        self.assertTrue(all(b>a for a,b in zip(before,after)))
+
+    def test_active_mode_keeps_clocks_running_in_arts_and_link(self):
+        g=self.battle();g.battle_mode='Active'
+        for submenu in ('Arts','Link'):
+            with self.subTest(submenu=submenu):
+                g.submenu=submenu
+                for h in g.party:h.atb=30
+                for e in g.enemies:e.atb=20
+                before=[h.atb for h in g.party]+[e.atb for e in g.enemies]
+                g.world.update(.25)
+                after=[h.atb for h in g.party]+[e.atb for e in g.enemies]
+                self.assertTrue(all(b>a for a,b in zip(before,after)))
 
     def test_all_clocks_keep_filling_while_a_command_target_is_open(self):
         g=self.battle();hero=g.party[0]

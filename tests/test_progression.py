@@ -224,6 +224,19 @@ class ProgressionTests(unittest.TestCase):
         self.assertEqual('title', self.g.state)
         self.assertEqual('{bad', game.SAVE.read_text())
 
+    def test_field_menu_toggles_and_persists_active_wait_mode(self):
+        g = self.g
+        self.assertEqual('Active', g.battle_mode)
+        g.state = 'menu'
+        g.room_menu = g.menu_options().index('Battle Mode: Active')
+        self.key(pygame.K_z)
+        self.assertEqual('Wait', g.battle_mode)
+        self.assertIn('Battle Mode: Wait', g.menu_options())
+        g.save()
+        g.battle_mode = 'Active'
+        g.load()
+        self.assertEqual('Wait', g.battle_mode)
+
     def test_required_route_and_every_tome_are_reachable_without_shortcut_keys(self):
         seen = {'gate'}
         todo = deque(seen)
