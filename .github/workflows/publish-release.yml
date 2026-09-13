@@ -7,6 +7,9 @@ on:
       - main
     paths:
       - .github/workflows/publish-release.yml
+      - RELEASE_NOTES_v1.3.md
+      - START_HERE.txt
+      - build.sh
 
 permissions:
   contents: write
