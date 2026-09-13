@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=The Ashen Circuit
+Comment=A 16-bit turn-based magitek dungeon RPG
+Exec=ashen-circuit
+Icon=ashen-circuit
+Terminal=false
+Type=Application
+Categories=Game;RolePlaying;
+

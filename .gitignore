@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+build/
+AppDir/usr/bin/
+appimage-build/
+dist/ashen-circuit
+*.log
+.DS_Store

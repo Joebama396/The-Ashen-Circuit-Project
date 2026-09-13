@@ -1,0 +1,313 @@
+import json
+import itertools
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+os.environ['SDL_VIDEODRIVER']='dummy'
+os.environ['SDL_AUDIODRIVER']='dummy'
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT']='1'
+import pygame
+import game
+
+
+class SeamlessTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix='ashen-test-')
+        self.savepatch=patch.object(game,'SAVE',Path(self.temp.name)/'save.json')
+        self.savepatch.start()
+        with patch.object(game.Game,'make_music',side_effect=pygame.error):
+            self.g=game.Game()
+
+    def tearDown(self):
+        self.savepatch.stop()
+        pygame.quit()
+        self.temp.cleanup()
+
+    def field(self, room='foundry'):
+        g=self.g
+        g.room=room;g.state='field';g.px,g.py=105,132
+        g.world.arrive()
+        return g
+
+    def settle(self, max_frames=900):
+        for _ in range(max_frames):
+            self.g.world.update(1/60)
+            if not self.g.world.busy:return
+        self.fail('Animation did not settle')
+
+    def battle(self, room='foundry'):
+        g=self.field(room)
+        p=g.world.patrols[0]
+        g.world.contact=p
+        g.start_battle([x.unit.key for x in p.pawns],p.boss)
+        self.settle()
+        return g
+
+    def action(self, hero, command, link=False):
+        if link:self.g.execute_link(command)
+        else:self.g.execute(hero,command)
+        if self.g.world.targeting:
+            self.g.battle_input(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_z))
+        self.settle()
+
+    def test_visible_enemies_are_actual_battle_objects(self):
+        g=self.field()
+        patrol=g.world.patrols[0]
+        g.world.contact=patrol
+        before=[p.pos for p in g.world.heroes+patrol.pawns]
+        g.start_battle([p.unit.key for p in patrol.pawns])
+        self.assertEqual(before,[p.pos for p in g.world.heroes+patrol.pawns])
+        self.assertEqual(g.enemies,[p.unit for p in patrol.pawns])
+
+    def test_ground_and_enemy_art_do_not_switch_on_contact(self):
+        g=self.field()
+        pawn=g.world.patrols[0].pawns[0]
+        g.world.draw_ground()
+        ground=pygame.image.tostring(g.canvas,'RGB')
+        art=pygame.image.tostring(g.world.enemy_image(pawn),'RGBA')
+        g.start_battle([p.unit.key for p in g.world.patrols[0].pawns])
+        g.world.draw_ground()
+        self.assertEqual(ground,pygame.image.tostring(g.canvas,'RGB'))
+        self.assertEqual(art,pygame.image.tostring(g.world.enemy_image(pawn),'RGBA'))
+
+    def test_contact_not_step_counter_starts_combat(self):
+        g=self.field('intake');g.world.grace=0
+        g.steps=100000
+        g.px,g.py=72,133
+        for _ in range(20):g.world.update(1/60)
+        self.assertEqual('field',g.state)
+        p=g.world.patrols[0].pawns[0]
+        g.px,g.py=p.pos
+        g.world.update(1/60)
+        self.assertEqual('battle',g.state)
+        self.assertEqual('forming',g.world.phase)
+
+    def test_every_room_can_stage_and_draw(self):
+        for room in game.ROOMS:
+            with self.subTest(room=room):
+                self.g.flags=set()
+                g=self.field(room)
+                g.draw()
+                if g.world.patrols:
+                    patrol=g.world.patrols[0]
+                    g.start_battle([p.unit.key for p in patrol.pawns],patrol.boss)
+                    self.settle();g.draw()
+                    positions=[p.pos for p in g.world.heroes]
+                    self.assertEqual(4,len(set(positions)))
+                    self.assertGreater(max(p[0] for p in positions)-min(p[0] for p in positions),80)
+                    for p in positions:
+                        self.assertTrue(g.world.walkable(p))
+                        self.assertLessEqual(p[1],129)
+
+    def test_melee_moves_and_damage_happens_at_impact(self):
+        g=self.battle()
+        hero=g.party[0];pawn=g.world.heroes[0]
+        start=pawn.pos;hp=g.enemies[0].hp
+        g.execute(hero,'Attack')
+        self.assertTrue(g.world.targeting)
+        g.battle_input(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_z))
+        for _ in range(15):g.world.update(1/60)
+        self.assertNotEqual(start,pawn.pos)
+        self.assertEqual(hp,g.enemies[0].hp)
+        self.settle()
+        self.assertLess(g.enemies[0].hp,hp)
+        self.assertEqual(start,pawn.pos)
+        self.assertEqual(1,g.turn_actor)
+
+    def test_controller_selects_a_different_visible_target(self):
+        g=self.battle()
+        g.event(pygame.event.Event(pygame.JOYBUTTONDOWN,button=0))
+        first=g.world.target
+        g.event(pygame.event.Event(pygame.JOYHATMOTION,value=(1,0)))
+        second=g.world.target
+        self.assertIsNot(first,second)
+        hp1,hp2=first.hp,second.hp
+        g.event(pygame.event.Event(pygame.JOYBUTTONDOWN,button=0))
+        self.settle()
+        self.assertEqual(hp1,first.hp)
+        self.assertLess(second.hp,hp2)
+
+    def test_commands_cannot_interrupt_animation(self):
+        g=self.battle()
+        self.g.execute(g.party[0],'Defend')
+        original=g.world.action
+        g.battle_input(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_z))
+        self.assertIs(original,g.world.action)
+        self.assertEqual(0,g.turn_actor)
+
+    def test_personal_and_link_are_disabled_until_charged(self):
+        g=self.battle()
+        for h in g.party:h.gauge=0
+        self.assertEqual([],g.ready_links())
+        g.cmd=1
+        g.battle_input(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_z))
+        self.assertIsNone(g.world.action)
+        self.assertIsNone(g.world.targeting)
+
+    def test_link_consumes_every_participant_once(self):
+        g=self.battle()
+        for h in g.party:h.gauge=100;h.hp-=100
+        self.action(g.party[0],'Aurora Circuit',link=True)
+        self.assertEqual([0,0,100,100],[h.gauge for h in g.party])
+        self.assertEqual(1,g.turn_actor)
+        self.assertEqual('battle',g.state)
+
+    def test_enemy_actions_are_sequential_then_charges_refill(self):
+        g=self.battle()
+        for h in g.party:h.gauge=0
+        for h in g.party:self.action(h,'Defend')
+        self.assertEqual(2,g.world.round)
+        self.assertEqual(0,g.turn_actor)
+        self.assertEqual([h.rate for h in g.party],[h.gauge for h in g.party])
+        self.assertTrue(any(h.hp<h.maxhp for h in g.party))
+
+    def test_every_art_and_personal_command_finishes(self):
+        for i in range(4):
+            names=[x[0] for x in game.ARTS[game.new_party()[i].name]]+[game.new_party()[i].skill]
+            for name in names:
+                with self.subTest(name=name):
+                    g=self.battle();g.turn_actor=i
+                    for h in g.party:h.mp=200;h.gauge=100;h.hp=h.maxhp-100
+                    self.action(g.party[i],name)
+                    self.assertIn(g.state,('battle','victory'))
+                    g.draw()
+
+    def test_all_links_animate_without_repeating_rewards(self):
+        for name in game.LINKS_TECH:
+            with self.subTest(name=name):
+                g=self.battle()
+                for h in g.party:h.gauge=100
+                g.flags.update(('relay_a','relay_b','relay_c','vael_down'))
+                self.action(g.party[0],name,link=True)
+                gold=g.gold
+                for _ in range(10):g.check_battle();g.world.update(1/60);g.draw()
+                self.assertEqual(gold,g.gold)
+
+    def test_victory_removes_patrol_without_teleport_and_saves(self):
+        g=self.battle()
+        for e in g.enemies:e.hp=1
+        g.party[3].gauge=100
+        self.action(g.party[3],'Grand Payload')
+        self.assertEqual('victory',g.state)
+        g.draw()  # A zero-enemy victory must remain renderable.
+        end=g.world.heroes[0].pos
+        g.end_victory()
+        self.assertEqual('field',g.state)
+        self.assertEqual(end,(g.px,g.py))
+        self.assertEqual([],g.world.patrols)
+        g.load()
+        self.assertEqual([],g.world.patrols)
+        self.assertEqual(end,(g.px,g.py))
+
+    def test_returning_to_room_respawns_farmable_patrols(self):
+        g=self.battle();potions=g.items['Potion']
+        for e in g.enemies:e.hp=0
+        g.check_battle();g.end_victory()
+        self.assertEqual(potions+1,g.items['Potion'])
+        g.transition('north_hall');g.transition('foundry')
+        self.assertEqual(1,len(g.world.patrols))
+
+    def test_all_declared_exits_are_reachable_including_fifth(self):
+        for room,links in game.LINKS.items():
+            for destination in links:
+                with self.subTest(room=room,destination=destination):
+                    g=self.field(room)
+                    g.flags.update(('relay_a','relay_b','relay_c','vael_down'))
+                    g.open_locks=set(game.LOCKS)
+                    p=dict(g.world.exits())[destination]
+                    g.px,g.py=p
+                    g.move(0,0)
+                    self.assertEqual(destination,g.room)
+
+    def test_locked_shortcut_consumes_one_key_only(self):
+        g=self.field('barracks');g.keys=2
+        g.transition('workshop')
+        self.assertEqual('barracks',g.room)
+        self.assertEqual(1,g.keys)
+        g.state='field';g.transition('workshop')
+        self.assertEqual('workshop',g.room)
+        g.transition('barracks');g.transition('workshop')
+        self.assertEqual(1,g.keys)
+
+    def test_boss_stays_visible_until_contact_and_stays_dead(self):
+        g=self.field('bridge')
+        self.assertEqual('field',g.state)
+        self.assertEqual('vael',g.world.patrols[0].boss)
+        p=g.world.patrols[0].pawns[0]
+        g.px,g.py=p.pos;g.world.grace=0;g.world.update(1/60)
+        self.assertEqual('battle',g.state)
+        self.settle()
+        for e in g.enemies:e.hp=0
+        g.check_battle();g.end_victory()
+        self.assertIn('vael_down',g.flags)
+        g.load()
+        self.assertEqual([],g.world.patrols)
+
+    def test_dragon_fires_before_combat_in_same_room(self):
+        g=self.field('cradle')
+        p=g.world.patrols[0].pawns[0]
+        g.px,g.py=p.pos;g.world.grace=0;g.world.update(1/60)
+        self.assertEqual('dialog',g.state)
+        self.assertTrue(any('CAELUS LANCE: FIRED' in line for _,line in g.dialog))
+        pos=p.pos
+        for _ in range(len(g.dialog)):g.event(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_z))
+        self.assertEqual('battle',g.state)
+        self.assertEqual('cradle',g.room)
+        self.assertEqual(pos,g.world.active.pawns[0].pos)
+        self.settle()
+        for e in g.enemies:e.hp=0
+        g.check_battle();g.end_victory()
+        self.assertEqual('ending',g.state)
+        self.assertIn('dragon_down',g.flags)
+
+    def test_legacy_save_loads_without_new_encounter_fields(self):
+        g=self.field('intake');g.save()
+        data=json.loads(game.SAVE.read_text())
+        del data['cleared_encounters'];del data['save_version']
+        game.SAVE.write_text(json.dumps(data))
+        g.load()
+        self.assertEqual('intake',g.room)
+        self.assertEqual(1,len(g.world.patrols))
+        for hero,pawn in zip(g.party,g.world.heroes):self.assertIs(hero,pawn.unit)
+
+    def test_dead_leader_and_poison_victory_are_safe(self):
+        g=self.battle()
+        g.party[0].hp=0
+        for e in g.enemies:e.hp=1;e.status['poison']=3
+        g.enemy_phase();self.settle()
+        self.assertEqual('victory',g.state)
+        g.draw()
+
+    def test_idle_silhouettes_clear_each_other_across_patrol_phases(self):
+        for room in game.ROOMS:
+            for phase in (0,2,5,9):
+                with self.subTest(room=room,phase=phase):
+                    g=self.field(room)
+                    g.flags=set();g.world.arrive();g.world.clock=phase
+                    if not g.world.patrols:continue
+                    g.world.grace=100;g.world.update(1/60)
+                    patrol=g.world.patrols[0];g.world.contact=patrol
+                    g.start_battle([p.unit.key for p in patrol.pawns],patrol.boss)
+                    self.settle();g.world.update(1/60)
+                    actors=[]
+                    for p in g.world.heroes:
+                        direction={0:3,1:2,2:0,3:1}[p.direction]
+                        source=g.party_sheet.subsurface(((direction*4+1)*32,p.hero*48,32,48))
+                        scale=.82*game.CHARACTER_SCALE[p.hero]
+                        image=pygame.transform.scale(source,(int(32*scale),int(48*scale)))
+                        actors.append((p.unit.name,pygame.mask.from_surface(image),
+                                       (int(p.x-image.get_width()/2),int(p.y-image.get_height()))))
+                    for p in patrol.pawns:
+                        image=g.world.enemy_image(p)
+                        actors.append((p.unit.name,pygame.mask.from_surface(image),
+                                       (int(p.x-40),int(p.y-69))))
+                    for a,b in itertools.combinations(actors,2):
+                        n,m,p=a;nn,mm,pp=b
+                        self.assertEqual(0,m.overlap_area(mm,(pp[0]-p[0],pp[1]-p[1])),f'{n}/{nn}')
+
+
+if __name__=='__main__':
+    unittest.main()

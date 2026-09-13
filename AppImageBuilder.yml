@@ -1,0 +1,18 @@
+version: 1
+AppDir:
+  path: ./AppDir
+  app_info:
+    id: com.sigmaai.ashencircuit
+    name: The Ashen Circuit
+    icon: ashen-circuit
+    version: 1.0.0
+    exec: usr/bin/ashen-circuit
+    exec_args: $@
+  runtime:
+    env:
+      SDL_AUDIODRIVER: pipewire,pulseaudio,alsa
+AppImage:
+  arch: x86_64
+  update-information: None
+  sign-key: None
+
