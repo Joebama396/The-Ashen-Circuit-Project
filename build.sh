@@ -22,11 +22,13 @@ fi
 ARCH=x86_64 "$ROOT/appimagetool-x86_64.AppImage" --appimage-extract-and-run AppDir "dist/The_Ashen_Circuit-1.3-x86_64.AppImage"
 chmod +x "dist/The_Ashen_Circuit-1.3-x86_64.AppImage"
 cp Play-The-Ashen-Circuit.sh dist/Play-The-Ashen-Circuit.sh
+cp START_HERE.txt dist/START_HERE.txt
 chmod +x dist/Play-The-Ashen-Circuit.sh
 # An extracted, portable build works without FUSE, Python, or package installs.
 mkdir -p build/portable/The-Ashen-Circuit
 cp -a AppDir/. build/portable/The-Ashen-Circuit/
 cp README.md build/portable/The-Ashen-Circuit/README.md
+cp START_HERE.txt build/portable/The-Ashen-Circuit/START_HERE.txt
 portable_temp="dist/The_Ashen_Circuit-1.3-Linux-Portable.writing.tar.gz"
 tar -czf "$portable_temp" -C build/portable The-Ashen-Circuit
 gzip -t "$portable_temp"
@@ -35,11 +37,17 @@ mv "$portable_temp" dist/The_Ashen_Circuit-1.3-Linux-Portable.tar.gz
 # AppImage always travel together, even when browsers block standalone scripts.
 zip_temp="dist/The_Ashen_Circuit-1.3-Ubuntu.writing.zip"
 zip -j -q "$zip_temp" \
-  dist/The_Ashen_Circuit-1.3-x86_64.AppImage dist/Play-The-Ashen-Circuit.sh
+  dist/The_Ashen_Circuit-1.3-x86_64.AppImage \
+  dist/Play-The-Ashen-Circuit.sh \
+  dist/START_HERE.txt
 unzip -tq "$zip_temp"
 mv "$zip_temp" dist/The_Ashen_Circuit-1.3-Ubuntu.zip
-sha256sum dist/The_Ashen_Circuit-1.3-x86_64.AppImage \
-  dist/Play-The-Ashen-Circuit.sh \
-  dist/The_Ashen_Circuit-1.3-Ubuntu.zip \
-  dist/The_Ashen_Circuit-1.3-Linux-Portable.tar.gz \
-  > dist/SHA256SUMS-1.3.txt
+(
+  cd dist
+  sha256sum The_Ashen_Circuit-1.3-x86_64.AppImage \
+    Play-The-Ashen-Circuit.sh \
+    The_Ashen_Circuit-1.3-Ubuntu.zip \
+    The_Ashen_Circuit-1.3-Linux-Portable.tar.gz \
+    START_HERE.txt \
+    > SHA256SUMS-1.3.txt
+)
