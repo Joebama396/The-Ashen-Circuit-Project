@@ -5,7 +5,7 @@ a = Analysis(
     ['game.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets/characters/party_overworld_v4.png', 'assets/characters')],
+    datas=[('assets/characters/party_motion_v1.png', 'assets/characters')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -47,9 +47,16 @@ class SeamlessTests(unittest.TestCase):
         g.world.contact=p
         g.start_battle([x.unit.key for x in p.pawns],p.boss)
         self.settle()
+        for h in g.party:h.atb=100
+        for e in g.enemies:e.atb=0
+        g.select_ready_actor(force=True)
         return g
 
     def action(self, hero, command, link=False):
+        if link:
+            for index in game.LINKS_TECH[command][0]:self.g.party[index].atb=100
+        else:hero.atb=100
+        self.g.turn_actor=self.g.party.index(hero)
         if link:self.g.execute_link(command)
         else:self.g.execute(hero,command)
         if self.g.world.targeting:
@@ -117,8 +124,8 @@ class SeamlessTests(unittest.TestCase):
         self.assertEqual(hp,g.enemies[0].hp)
         self.settle()
         self.assertLess(g.enemies[0].hp,hp)
-        self.assertEqual(start,pawn.pos)
-        self.assertEqual(1,g.turn_actor)
+        self.assertNotEqual(start,pawn.pos)
+        self.assertTrue(0<hero.atb<60)
 
     def test_controller_selects_a_different_visible_target(self):
         g=self.battle()
@@ -139,11 +146,11 @@ class SeamlessTests(unittest.TestCase):
         original=g.world.action
         g.battle_input(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_z))
         self.assertIs(original,g.world.action)
-        self.assertEqual(0,g.turn_actor)
+        self.assertEqual(0,g.party[0].atb)
 
     def test_personal_and_link_are_disabled_until_charged(self):
         g=self.battle()
-        for h in g.party:h.gauge=0
+        for h in g.party:h.gauge=0;h.atb=0
         self.assertEqual([],g.ready_links())
         g.cmd=1
         g.battle_input(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_z))
@@ -153,19 +160,38 @@ class SeamlessTests(unittest.TestCase):
     def test_link_consumes_every_participant_once(self):
         g=self.battle()
         for h in g.party:h.gauge=100;h.hp-=100
-        self.action(g.party[0],'Aurora Circuit',link=True)
-        self.assertEqual([0,0,100,100],[h.gauge for h in g.party])
-        self.assertEqual(1,g.turn_actor)
+        for i in game.LINKS_TECH['Aurora Circuit'][0]:g.party[i].atb=100
+        g.turn_actor=0;g.execute_link('Aurora Circuit')
+        self.assertEqual([0,0,100,100],[h.atb for h in g.party])
+        self.settle()
+        self.assertTrue(all(0<h.atb<60 for h in g.party[:2]))
+        self.assertEqual([100,100,100,100],[h.gauge for h in g.party])
         self.assertEqual('battle',g.state)
 
-    def test_enemy_actions_are_sequential_then_charges_refill(self):
+    def test_active_enemy_attacks_without_waiting_for_player_input(self):
         g=self.battle()
-        for h in g.party:h.gauge=0
-        for h in g.party:self.action(h,'Defend')
-        self.assertEqual(2,g.world.round)
-        self.assertEqual(0,g.turn_actor)
-        self.assertEqual([h.rate for h in g.party],[h.gauge for h in g.party])
+        for h in g.party:h.atb=0
+        for e in g.enemies:e.atb=99
+        before=sum(h.hp for h in g.party)
+        for _ in range(600):
+            g.world.update(1/60)
+            if sum(h.hp for h in g.party)<before:break
         self.assertTrue(any(h.hp<h.maxhp for h in g.party))
+        self.assertTrue(any(e.turn>0 for e in g.enemies))
+
+    def test_all_clocks_keep_filling_while_a_command_target_is_open(self):
+        g=self.battle();hero=g.party[0]
+        g.execute(hero,'Attack');self.assertTrue(g.world.targeting)
+        before=[e.atb for e in g.enemies]
+        for _ in range(30):g.world.update(1/60)
+        self.assertTrue(all(e.atb>a for e,a in zip(g.enemies,before)))
+
+    def test_xbox_bumpers_switch_between_ready_characters(self):
+        g=self.battle();self.assertEqual(0,g.turn_actor)
+        g.event(pygame.event.Event(pygame.JOYBUTTONDOWN,button=5))
+        self.assertEqual(1,g.turn_actor)
+        g.event(pygame.event.Event(pygame.JOYBUTTONDOWN,button=4))
+        self.assertEqual(0,g.turn_actor)
 
     def test_every_art_and_personal_command_finishes(self):
         for i in range(4):
@@ -280,7 +306,10 @@ class SeamlessTests(unittest.TestCase):
         g=self.battle()
         g.party[0].hp=0
         for e in g.enemies:e.hp=1;e.status['poison']=3
-        g.enemy_phase();self.settle()
+        while g.state=='battle':
+            alive=next((e for e in g.enemies if e.alive()),None)
+            if not alive:break
+            alive.atb=100;alive.ready_stamp=0;g.world.schedule_ready_enemy();self.settle()
         self.assertEqual('victory',g.state)
         g.draw()
 
@@ -298,7 +327,7 @@ class SeamlessTests(unittest.TestCase):
                     actors=[]
                     for p in g.world.heroes:
                         direction={0:3,1:2,2:0,3:1}[p.direction]
-                        source=g.party_sheet.subsurface(((direction*4+1)*32,p.hero*48,32,48))
+                        source=g.party_sheet.subsurface(((direction*8)*32,p.hero*48,32,48))
                         scale=.82*game.CHARACTER_SCALE[p.hero]
                         image=pygame.transform.scale(source,(int(32*scale),int(48*scale)))
                         actors.append((p.unit.name,pygame.mask.from_surface(image),

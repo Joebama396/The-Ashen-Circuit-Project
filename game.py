@@ -76,9 +76,11 @@ STORY={
 class Hero:
  def __init__(self,name,job,weapon,element,hp,mp,powr,mag,spd,skill,rate):
   self.name,self.job,self.weapon,self.element=name,job,weapon,element; self.maxhp,self.hp=hp,hp; self.maxmp,self.mp=mp,mp
-  self.pow,self.mag,self.spd=powr,mag,spd; self.base_spd=spd; self.defense=0; self.resist=0; self.skill,self.rate=skill,rate; self.gauge=random.randint(25,65); self.guard=False;self.buffs={}
+  self.pow,self.mag,self.spd=powr,mag,spd;self.base_spd=spd;self.defense=0;self.resist=0;self.skill,self.rate=skill,rate
+  self.gauge=random.randint(25,65);self.atb=0.;self.ready_stamp=0.;self.guard=False;self.buffs={}
  def alive(self): return self.hp>0
  def recharge(self): return self.rate + max(0,self.spd-self.base_spd)*.6
+ def atb_rate(self): return 16+self.spd*.45
 
 def new_party(): return [
  Hero('Rian','Frostguard','Sword','Ice',440,58,43,27,22,"Winter's Standard",31),
@@ -95,8 +97,9 @@ ENEMIES={
 class Enemy:
  def __init__(self,key,scale=1):
   n,h,p,m,s,c=ENEMIES[key]; self.key=key; self.name=n; self.maxhp=int(h*scale); self.hp=self.maxhp
-  self.pow=int(p*scale);self.mag=int(m*scale);self.spd=s;self.color=c;self.status={};self.turn=0
+  self.pow=int(p*scale);self.mag=int(m*scale);self.spd=s;self.color=c;self.status={};self.turn=0;self.atb=0.;self.ready_stamp=0.
  def alive(self):return self.hp>0
+ def atb_rate(self):return 14+self.spd*.42
 
 FORMATIONS=[['scout','drone'],['mite','mite','drone'],['guard','scout'],['wisp','mite'],['soldier','drone'],['guard','wisp'],['serpent','mite'],['golem'],['soldier','guard']]
 
@@ -106,11 +109,11 @@ class Game(ProgressionMixin):
   self.full=False; self.screen=pygame.display.set_mode((W*SCALE,H*SCALE));pygame.display.set_caption('The Ashen Circuit')
   self.canvas=pygame.Surface((W,H)); self.clock=pygame.time.Clock()
   self.font=pygame.font.Font(None,12);self.small=pygame.font.Font(None,10);self.tiny=pygame.font.Font(None,9);self.big=pygame.font.Font(None,22)
-  self.party_sheet=pygame.image.load(str(resource_path('assets/characters/party_overworld_v4.png'))).convert_alpha()
+  self.party_sheet=pygame.image.load(str(resource_path('assets/characters/party_motion_v1.png'))).convert_alpha()
   self.state='title';self.party=new_party();self.room='gate';self.prev=None;self.px,self.py=160,110;self.facing=0
   self.flags=set();self.open_locks=set();self.keys=0;self.gold=0;self.items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1}
   self.weapon=0;self.armor=0;self.steps=0;self.dialog=[];self.dindex=0;self.room_menu=0
-  self.enemies=[];self.turn_actor=0;self.cmd=0;self.submenu=None;self.target=0;self.log=[];self.log_wait=0;self.boss=None
+  self.enemies=[];self.turn_actor=-1;self.cmd=0;self.submenu=None;self.target=0;self.log=[];self.log_wait=0;self.boss=None
   self.manual_page=0;self.manual_type='party'
   self.treasure=make_treasure(ROOMS);self.init_progression()
   self.playtime=0;self.last_tick=pygame.time.get_ticks();self.toast='';self.toast_t=0;self.shake=0;self.moving=False
@@ -161,7 +164,7 @@ class Game(ProgressionMixin):
    for h,v in zip(self.party,d['party']):
     for stat,value in v.get('stats',{}).items():
      if stat in STATS:setattr(h,stat,int(value))
-    h.hp=clamp(v['hp'],0,h.maxhp);h.mp=clamp(v['mp'],0,h.maxmp);h.gauge=v.get('gauge',0);h.buffs=v.get('buffs',{})
+    h.hp=clamp(v['hp'],0,h.maxhp);h.mp=clamp(v['mp'],0,h.maxmp);h.gauge=v.get('gauge',0);h.atb=0;h.buffs=v.get('buffs',{})
    self.learned=set(d.get('learned_tomes',[])) & ALL_TOMES
    valid={c.uid for chests in self.treasure.values() for c in chests}
    self.opened_chests=set(d.get('opened_chests',[])) & valid
@@ -243,12 +246,16 @@ class Game(ProgressionMixin):
  def battle_input(self,e):
   if self.world.busy:return
   if self.world.target_input(e):return
-  if self.log_wait:return
   alive=[h for h in self.party if h.alive()]
   if not alive:return
+  if self.turn_actor<0 or self.party[self.turn_actor].atb<100:
+   self.select_ready_actor()
+  if self.turn_actor<0:return
   hero=self.party[self.turn_actor]
-  if not hero.alive():self.next_actor();return
+  if not hero.alive():self.select_ready_actor(force=True);return
   if e.type!=pygame.KEYDOWN:return
+  if e.key in (pygame.K_q,pygame.K_e):
+   self.cycle_ready_actor(-1 if e.key==pygame.K_q else 1);return
   if self.submenu:
    opts=self.get_submenu(hero)
    if e.key in (pygame.K_UP,pygame.K_w):self.target=(self.target-1)%len(opts)
@@ -275,7 +282,24 @@ class Game(ProgressionMixin):
 
  def ready_links(self):
   return [name for name,(people,_) in LINKS_TECH.items()
-          if name in self.learned and all(self.party[i].alive() and self.party[i].gauge>=100 for i in people)]
+          if name in self.learned and all(self.party[i].alive() and self.party[i].atb>=100 for i in people)]
+
+ def ready_party(self):
+  return [i for i,h in enumerate(self.party) if h.alive() and h.atb>=100]
+
+ def select_ready_actor(self,force=False):
+  ready=self.ready_party()
+  if not ready:self.turn_actor=-1;self.submenu=None;self.world.targeting=None;return
+  if not force and self.turn_actor in ready:return
+  self.turn_actor=min(ready,key=lambda i:self.party[i].ready_stamp)
+  self.cmd=0;self.submenu=None;self.target=0;self.world.target=None;self.world.targeting=None
+
+ def cycle_ready_actor(self,delta):
+  ready=self.ready_party()
+  if len(ready)<2:return
+  current=ready.index(self.turn_actor) if self.turn_actor in ready else 0
+  self.turn_actor=ready[(current+delta)%len(ready)]
+  self.cmd=0;self.submenu=None;self.target=0;self.world.target=None;self.world.targeting=None
 
  def get_submenu(self,h):
   if self.submenu=='Arts':return [f'{n} {cost}MP' for n,cost in self.known_arts(h)] or ['(Find tomes in chests)']
@@ -367,7 +391,7 @@ class Game(ProgressionMixin):
   elif c=='Phoenix Gear':
    dead=[x for x in self.party if not x.alive()]
    if dead:self.items[c]-=1;dead[0].hp=dead[0].maxhp//3;lines=[f'{dead[0].name} returns to battle!']
-   else:lines=['No one needs revival.'];self.turn_actor-=1
+   else:lines=['No one needs revival.']
   elif c=='Bomb':self.items[c]-=1;d=self.damage(h,t,100,True);lines=[f'The Bomb erupts — {d} damage!']
   self.log=lines;self.log_wait=0;self.check_battle()
 
@@ -375,10 +399,9 @@ class Game(ProgressionMixin):
   self.world.request_action(self.party[self.turn_actor],name,link=True)
 
  def resolve_link(self,name):
-  if name not in self.ready_links():return
+  if name not in self.learned:return
   foes=[e for e in self.enemies if e.alive()];people,_=LINKS_TECH[name]
   if not foes:return
-  for i in people:self.party[i].gauge=0
   r,m,tess,b=self.party;target=self.world.target if self.world.target in foes else max(foes,key=lambda e:e.hp);lines=[]
   if name=='Aurora Circuit':
    total=sum(self.heal(x,x.maxhp*.48) for x in self.party)
@@ -413,16 +436,30 @@ class Game(ProgressionMixin):
    lines=[f'ZERO HOUR — {total} damage! The party is restored!']
   self.log=lines;self.log_wait=0;self.check_battle()
 
- def next_actor(self):
+ def finish_hero_action(self,actors,command):
   if self.state!='battle':return
-  self.cmd=0;self.submenu=None;self.target=0
-  self.world.target=None
-  self.turn_actor+=1
-  while self.turn_actor<4 and not self.party[self.turn_actor].alive():self.turn_actor+=1
-  if self.turn_actor>=4 and any(e.alive() for e in self.enemies):self.enemy_phase()
+  for pawn in actors:
+   h=pawn.unit
+   if command!='Defend':h.guard=False
+   if h.buffs.get('regen',0):self.heal(h,h.maxhp*.06)
+   for key in list(h.buffs):h.buffs[key]=max(0,h.buffs[key]-1)
+  self.cmd=0;self.submenu=None;self.target=0;self.world.target=None
+  self.turn_actor=-1;self.select_ready_actor(force=True);self.check_battle()
+
+ def finish_enemy_action(self,enemy):
+  if self.state!='battle':return
+  self.turn_actor=-1 if self.turn_actor>=0 and not self.party[self.turn_actor].alive() else self.turn_actor
+  if self.turn_actor<0:self.select_ready_actor(force=True)
+  self.check_battle()
+
+ # Compatibility entry points for tools that stage combat directly.
+ def next_actor(self):
+  actors=self.world.action['actors'] if self.world.action else []
+  command=self.world.action['name'] if self.world.action else ''
+  self.finish_hero_action(actors,command)
 
  def enemy_phase(self):
-  self.world.queue_enemies()
+  self.world.force_enemy_action()
 
  def resolve_enemy_turn(self,e,t):
   lines=[];e.turn+=1
@@ -442,15 +479,6 @@ class Game(ProgressionMixin):
    lines.append(f'{e.name}: {d} damage to {t.name}!')
   elif slowed:lines.append(f'{e.name} is slowed!')
   self.log=lines;self.log_wait=0;self.check_battle()
-
- def finish_enemy_round(self):
-  for h in self.party:
-   if h.alive():h.gauge=min(100,h.gauge+h.recharge())
-   h.guard=False
-   if h.buffs.get('regen',0):self.heal(h,h.maxhp*.06)
-   for k in list(h.buffs):h.buffs[k]=max(0,h.buffs[k]-1)
-  self.turn_actor=next((i for i,h in enumerate(self.party) if h.alive()),0)
-  self.log_wait=0;self.check_battle()
 
  def check_battle(self):
   if self.state!='battle':return
@@ -498,7 +526,7 @@ class Game(ProgressionMixin):
    return True
   if e.type==pygame.JOYBUTTONDOWN:
    self.pad_buttons.add(e.button)
-   key=pygame.K_n if e.button==3 and self.state=='title' else pygame.K_z if e.button==0 else pygame.K_x if e.button==1 else pygame.K_ESCAPE if e.button in (4,6,7) else pygame.K_UP if e.button==11 else pygame.K_DOWN if e.button==12 else pygame.K_LEFT if e.button==13 else pygame.K_RIGHT if e.button==14 else None
+   key=pygame.K_n if e.button==3 and self.state=='title' else pygame.K_z if e.button==0 else pygame.K_x if e.button==1 else pygame.K_q if e.button==4 and self.state=='battle' else pygame.K_e if e.button==5 and self.state=='battle' else pygame.K_ESCAPE if e.button in (6,7) else pygame.K_UP if e.button==11 else pygame.K_DOWN if e.button==12 else pygame.K_LEFT if e.button==13 else pygame.K_RIGHT if e.button==14 else None
    if key is not None:return self.event(pygame.event.Event(pygame.KEYDOWN,key=key))
   if e.type==pygame.JOYBUTTONUP:
    self.pad_buttons.discard(e.button);return True
@@ -559,7 +587,7 @@ class Game(ProgressionMixin):
   # Sheet directions are down, left, right, up; field facing uses up/right/down/left.
   scale*=CHARACTER_SCALE[index]
   sheet_dir={0:3,1:2,2:0,3:1}.get(direction,direction)
-  src=pygame.Rect((sheet_dir*4+frame)*32,index*48,32,48);img=self.party_sheet.subsurface(src)
+  src=pygame.Rect((sheet_dir*8+frame%8)*32,index*48,32,48);img=self.party_sheet.subsurface(src)
   if scale!=1:img=pygame.transform.scale(img,(int(32*scale),int(48*scale)))
   self.canvas.blit(img,(int(x-img.get_width()/2),int(y-img.get_height())))
 
@@ -579,7 +607,7 @@ class Game(ProgressionMixin):
  def draw_room(self):
   self.world.draw_scene()
 
- def wrap(self,s,maxchars=58):
+ def wrap(self,s,maxchars=48):
   out=[];line=''
   for w in s.split():
    if len(line)+len(w)+1>maxchars:out.append(line);line=w
@@ -589,10 +617,10 @@ class Game(ProgressionMixin):
 
  def draw_dialog(self):
   self.draw_room();name,line=self.dialog[min(self.dindex,len(self.dialog)-1)]
-  panel(self.canvas,(6,122,308,53))
-  label(self.canvas,name,13,128,GOLD)
-  for i,l in enumerate(self.wrap(line,72)):label(self.canvas,l,13,141+i*9,WHITE)
-  label(self.canvas,'A: NEXT',277,168,CYAN)
+  panel(self.canvas,(4,112,312,65))
+  label(self.canvas,name,11,118,GOLD)
+  for i,l in enumerate(self.wrap(line,49)):label(self.canvas,l,11,130+i*10,WHITE)
+  label(self.canvas,'A: NEXT',265,167,CYAN)
 
  def draw_battle(self):
   self.world.draw_scene()
@@ -648,14 +676,26 @@ def smoke_test(g):
   g.world.update(1/60)
   if not g.world.busy:break
  assert not g.world.busy, 'Party formation did not finish'
- hp=g.enemies[0].hp
  confirm=pygame.event.Event(pygame.KEYDOWN,key=pygame.K_z)
- g.battle_input(confirm);g.battle_input(confirm)
+ for _ in range(600):
+  g.world.update(1/60)
+  if g.turn_actor>=0:break
+ assert g.turn_actor>=0, 'No party ATB reached ready'
+ g.battle_input(confirm)
+ target=g.world.target;hp=target.hp
+ g.battle_input(confirm)
  for _ in range(600):
   g.world.update(1/60)
   if not g.world.busy:break
  g.draw()
- assert g.enemies[0].hp<hp and g.turn_actor==1, 'Queued attack failed'
+ assert target.hp<hp, 'Queued attack failed'
+ before=sum(h.hp for h in g.party)
+ enemy=next(e for e in g.world.active.pawns if e.unit.alive())
+ enemy.unit.atb=100;enemy.unit.ready_stamp=0
+ for _ in range(600):
+  g.world.update(1/60)
+  if sum(h.hp for h in g.party)<before:break
+ assert sum(h.hp for h in g.party)<before, 'Enemy active-time attack did not fire'
  # Exercise real treasure, controller menus, and persistence against a temporary
  # save, never against the player's data.
  import tempfile
@@ -676,7 +716,7 @@ def smoke_test(g):
    g.load();assert g.party[0].pow==old+1, 'Permanent growth did not survive loading'
    g.state='bag';g.draw()
   finally:SAVE=original_save
- print('SMOKE OK: packaged sprites, seamless contact, movement, targeting, attack, tomes, stat items, Xbox menus, saves')
+ print('SMOKE OK: motion sprites, active-time allies/enemies, persistent movement, readable HUD, tomes, Xbox menus, saves')
  pygame.quit()
 
 if __name__=='__main__':

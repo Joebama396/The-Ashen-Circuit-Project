@@ -7,8 +7,8 @@ the final dragon fight.
 
 ## Play on Ubuntu
 
-Download `The_Ashen_Circuit-1.1-x86_64.AppImage` and `Play-The-Ashen-Circuit.sh`
-into the same folder. Open a terminal in that folder and run:
+Download and extract `The_Ashen_Circuit-1.2-Ubuntu.zip`. It already contains the
+matching AppImage and launcher. Open a terminal in the extracted folder and run:
 
 ```sh
 sh ./Play-The-Ashen-Circuit.sh
@@ -22,11 +22,11 @@ in your file manager, if that option is available.
 The AppImage can be run directly without FUSE too:
 
 ```sh
-chmod +x ./The_Ashen_Circuit-1.1-x86_64.AppImage
-./The_Ashen_Circuit-1.1-x86_64.AppImage --appimage-extract-and-run
+chmod +x ./The_Ashen_Circuit-1.2-x86_64.AppImage
+./The_Ashen_Circuit-1.2-x86_64.AppImage --appimage-extract-and-run
 ```
 
-An alternative download, `The_Ashen_Circuit-1.1-Linux-Portable.tar.gz`, contains the
+An alternative download, `The_Ashen_Circuit-1.2-Linux-Portable.tar.gz`, contains the
 same game already unpacked. Extract it, open the `The-Ashen-Circuit` folder, and
 run `AppRun` (or `sh ./AppRun` in a terminal). Keep its files together.
 
@@ -45,22 +45,35 @@ physical Ubuntu 26.04 desktop has not been available for testing. If startup
 still fails, share `~/.local/state/ashen-circuit/launcher.log` and
 `~/.local/state/ashen-circuit/game.log` (if present).
 
-## Seamless combat
+## Active seamless combat
 
 Enemies patrol the dungeon visibly. Touch one and the same room enters combat:
-the party runs to spread-out positions, then commands appear. There is no
-separate arena, camera cut, or sprite swap. Sword and dagger attacks approach
-the enemy; Marek fires a rail-pistol projectile; Brann lobs grenades. Allies and
-enemies move during their attacks. Combat remains turn based: movement is
-command-driven, rather than free movement while selecting commands.
+the party runs to spread-out positions, then the active-time clocks begin. There
+is no separate arena, camera cut, or sprite swap. Every party member has a visible
+colored ATB bar in the lower-right panel. A white outline and selection arrow
+mean that character is ready for input. LB/RB switches between ready characters.
+
+Time remains active during command and target selection. Enemies fill their own
+gauges, choose targets, and attack without waiting for the player. Sword and
+dagger users draw their weapons and close the distance; Marek braces and fires a
+visible rail-pistol projectile; Brann shoulders his launcher and arcs grenades.
+Actors run to impact positions, then take new positions instead of snapping back
+to a fixed formation. The rest of the party and the enemies keep shifting around
+the shared room between attacks.
 
 Normal patrols return when you leave and re-enter their rooms. Repair Drones
 always drop a Potion, allowing supply farming. Bosses and treasure do not respawn.
 Enemy strength increases by region to account for permanent character growth.
 
-The approved overworld character artwork is unchanged. Relative scales remain
-Rian 105%, Marek 100%, Tess 98%, Brann 110%. Enemy art is still a simple code-drawn
-baseline. All gameplay screenshots are PNGs.
+The approved overworld character designs are unchanged. Their new eight-frame
+walk cycles alternate legs and arms while adding restrained coat-pleat and long
+hair follow-through. Relative scales remain Rian 105%, Marek 100%, Tess 98%,
+Brann 110%. Enemy art remains a code-drawn baseline, now animated and mobile in
+combat. All gameplay screenshots are PNGs.
+
+Dialogue, field prompts, combat messages, commands, HP/MP values, and ATB panels
+now use a high-contrast 5x7 pixel alphabet designed for the native 320x180 canvas.
+The field menu layout is intentionally unchanged in this pass.
 
 ## Treasure replaces leveling
 
@@ -86,7 +99,7 @@ HP upgrades do not revive a fallen character.
 | Magic | +1 / +3 / +5 | Spell damage and scaling heals |
 | Defense | +1 / +3 / +5 | Reduces physical damage received |
 | Resistance | +1 / +3 / +5 | Reduces magical damage received |
-| Speed | +1 / +3 / +5 | Faster hidden personal/Link recharge |
+| Speed | +1 / +3 / +5 | Faster visible ATB and hidden personal recharge |
 | HP | +10 / +30 / +50 | Maximum health |
 | MP | +3 / +8 / +15 | Maximum magic points |
 
@@ -101,10 +114,11 @@ are mixed into the chests; no scarce access key is needed to obtain any tome.
 - Tess, Venomist: daggers, bio/poison, debuffs.
 - Brann, Bombardier: launcher, fire/non-elemental damage.
 
-Learned personal commands grey out while their hidden charge refills. Spell
-commands require MP. A learned Link requires every participant alive and fully
-charged, and consumes all participants' charges. Dual, triple, and four-person
-Links are obtained from chests, independently of story flags.
+Learned personal commands grey out while their separate hidden charge refills;
+a gold pip at the end of a ready character's ATB bar shows that charge is full.
+Spell commands require MP. A learned Link requires every participant alive with
+a full visible ATB bar, and consumes all participating ATB bars. Dual, triple,
+and four-person Links are obtained from chests, independently of story flags.
 
 Three relay keys serve five service locks. Unlocks are permanent. The route to
 the relays, command bridge, and dragon remains accessible regardless of how you
@@ -118,6 +132,7 @@ entrances. Gear can also be upgraded at the vault and after the midpoint boss.
 | Move / select | Arrows or WASD | Left stick / D-pad |
 | Confirm / interact | Z / Enter | A |
 | Cancel / field menu | X / Escape | B / Start |
+| Switch ready character (battle) | Q / E | LB / RB |
 | New game at title | N | Y |
 | Quick-save outside combat | F5 | Field menu: Save |
 | Toggle fullscreen | F11 | — |
@@ -162,7 +177,8 @@ If dependencies are installed in the local `vendor` folder, prepend
 `dist/`. The build produces an AppImage, a FUSE-bypass launcher, and an extracted
 portable archive. Tests use temporary saves and SDL dummy devices. They cover
 seamless rendering, contact, targeting, movement, all Arts/Links, every room,
-controller inputs, finite treasure, stat effects, save migration, and bosses.
+controller inputs, active enemy clocks, finite treasure, stat effects, save
+migration, and bosses.
 
 Run `python3 tools/preview_seamless.py --video` for staged gameplay PNGs and an
 optional MP4. Run `python3 tools/preview_progression.py` for treasure and growth

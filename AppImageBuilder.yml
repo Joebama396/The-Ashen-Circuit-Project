@@ -5,7 +5,7 @@ AppDir:
     id: com.sigmaai.ashencircuit
     name: The Ashen Circuit
     icon: ashen-circuit
-    version: 1.1.0
+    version: 1.2.0
     exec: usr/bin/ashen-circuit
     exec_args: $@
   runtime:
@@ -15,4 +15,3 @@ AppImage:
   arch: x86_64
   update-information: None
   sign-key: None
-

@@ -65,27 +65,32 @@ def main():
             frame()
         if g.state!='battle':raise RuntimeError('Demo never made contact')
         while g.world.busy:frame()
-        frame(24)
+        while g.turn_actor<0:frame()
+        frame(12)
         snap('39_seamless_battle.png')
-        confirm();frame(15);confirm()
+        confirm();frame(6);confirm()
         while g.world.action and g.world.action['elapsed']/g.world.action['duration']<.54:frame()
         snap('40_seamless_melee.png')
         while g.world.busy:frame()
-        frame(18)
+        frame(10)
         # Use the real target picker, then the real queued rail-pistol action.
+        g.party[1].atb=100;g.turn_actor=1
         g.execute(g.party[1],'Rail Shot')
         g.battle_input(pygame.event.Event(pygame.KEYDOWN,key=pygame.K_RIGHT))
-        frame(15);confirm()
+        frame(5);confirm()
         while g.world.action and g.world.action['elapsed']/g.world.action['duration']<.36:frame()
         snap('41_seamless_rail_projectile.png')
         while g.world.busy:frame()
-        frame(18)
-        g.execute(g.party[2],'Venom Cut');frame(12);confirm()
+        frame(10)
+        # Let a real enemy active-time gauge interrupt without player input.
+        for h in g.party:h.atb=0
+        enemy=next(p for p in g.world.active.pawns if p.unit.alive())
+        enemy.unit.atb=99
+        while not (g.world.action and g.world.action['enemy']):frame()
+        while g.world.action and g.world.action['elapsed']/g.world.action['duration']<.48:frame()
+        snap('46_active_enemy_attack.png')
         while g.world.busy:frame()
-        frame(18)
-        g.execute(g.party[3],'Incendiary')
-        while g.world.busy:frame()
-        frame(45)
+        frame(30)
     finally:
         if encoder:
             encoder.stdin.close()

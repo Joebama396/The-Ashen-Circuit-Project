@@ -192,9 +192,10 @@ class ProgressionTests(unittest.TestCase):
         self.open('nexus')
         for h in g.party:
             h.gauge = 100
+            h.atb = 100
         self.assertIn('Aurora Circuit', g.ready_links())
         self.assertNotIn('Plague Canister', g.ready_links())
-        g.party[1].gauge = 99
+        g.party[1].atb = 99
         self.assertNotIn('Aurora Circuit', g.ready_links())
 
     def test_legacy_save_keeps_story_and_backs_up_before_growth_migration(self):
