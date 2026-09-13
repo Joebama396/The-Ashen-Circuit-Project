@@ -26,6 +26,8 @@ def main():
     out.mkdir(exist_ok=True)
     random.seed(23)
     g=game.Game()
+    # Stage a party that has already collected these tomes for animation QA.
+    g.learned.update(('Rail Shot','Venom Cut','Incendiary'))
     g.room='foundry';g.state='field';g.px,g.py=77,137;g.facing=1
     g.world.arrive();g.world.clock=0
     encoder=None
@@ -41,7 +43,11 @@ def main():
             if encoder:encoder.stdin.write(pygame.image.tostring(g.screen,'RGB'))
 
     def snap(filename):
-        g.draw();pygame.image.save(g.screen,out/filename)
+        g.draw()
+        temporary=out/(filename+'.tmp.png')
+        pygame.image.save(g.screen,str(temporary))
+        pygame.image.load(str(temporary))  # Validate before replacing a good PNG.
+        temporary.replace(out/filename)
         print(out/filename)
 
     def confirm():

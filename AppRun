@@ -1,4 +1,20 @@
 #!/bin/sh
-HERE="$(dirname "$(readlink -f "$0")")"
-exec "$HERE/usr/bin/ashen-circuit" "$@"
-
+app_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ashen-circuit"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/ashen-circuit/runtime"
+mkdir -p "$state_dir" "$cache_dir" || exit 1
+export TMPDIR="$cache_dir"
+export PYGAME_HIDE_SUPPORT_PROMPT=1
+log="$state_dir/game.log"
+printf '%s\n' "The Ashen Circuit - $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$log"
+"$app_dir/usr/bin/ashen-circuit" "$@" >> "$log" 2>&1
+result=$?
+case " $* " in *' --smoke-test '*) cat "$log";; esac
+if [ "$result" -ne 0 ]; then
+    cat "$log" >&2
+    printf '%s\n' "Game failed to start. Details: $log" >&2
+    if command -v zenity >/dev/null 2>&1; then
+        zenity --error --title='The Ashen Circuit' --text="The game stopped unexpectedly. Please share this log:\n$log" 2>/dev/null || :
+    fi
+fi
+exit "$result"

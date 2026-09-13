@@ -18,5 +18,12 @@ if [[ ! -x "$ROOT/appimagetool-x86_64.AppImage" ]]; then
   echo "Missing appimagetool-x86_64.AppImage in project root" >&2
   exit 1
 fi
-ARCH=x86_64 "$ROOT/appimagetool-x86_64.AppImage" --appimage-extract-and-run AppDir "dist/The_Ashen_Circuit-x86_64.AppImage"
-chmod +x "dist/The_Ashen_Circuit-x86_64.AppImage"
+ARCH=x86_64 "$ROOT/appimagetool-x86_64.AppImage" --appimage-extract-and-run AppDir "dist/The_Ashen_Circuit-1.1-x86_64.AppImage"
+chmod +x "dist/The_Ashen_Circuit-1.1-x86_64.AppImage"
+cp Play-The-Ashen-Circuit.sh dist/Play-The-Ashen-Circuit.sh
+chmod +x dist/Play-The-Ashen-Circuit.sh
+# An extracted, portable build works without FUSE, Python, or package installs.
+mkdir -p build/portable/The-Ashen-Circuit
+cp -a AppDir/. build/portable/The-Ashen-Circuit/
+cp README.md build/portable/The-Ashen-Circuit/README.md
+tar -czf dist/The_Ashen_Circuit-1.1-Linux-Portable.tar.gz -C build/portable The-Ashen-Circuit

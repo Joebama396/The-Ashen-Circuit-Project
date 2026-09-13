@@ -10,3 +10,9 @@ appimage-build/
 dist/ashen-circuit
 *.log
 .DS_Store
+checkpoints/
+vendor/
+appimagetool-x86_64.AppImage
+dist/*.AppImage
+dist/*.tar.gz
+dist/*.zip

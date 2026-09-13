@@ -20,6 +20,9 @@ class SeamlessTests(unittest.TestCase):
         self.savepatch.start()
         with patch.object(game.Game,'make_music',side_effect=pygame.error):
             self.g=game.Game()
+        # These tests exercise animation and combat after discovering the tomes.
+        # Fresh-party unlock rules are covered separately in test_progression.
+        self.g.learned=set(game.ALL_TOMES)
 
     def tearDown(self):
         self.savepatch.stop()

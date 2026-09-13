@@ -4,11 +4,13 @@ from pathlib import Path
 import pygame
 from seamless import WorldCombat
 from pixel_ui import label, panel
+from progression import (ProgressionMixin, ARTS, LINKS_TECH, COSTS, CONSUMABLES,
+                         ALL_TOMES, STATS, make_treasure)
 
 W,H,SCALE=320,180,4
 TILE=16
 FPS=60
-SAVE=Path.home()/'.local/share/ashen-circuit/save.json'
+SAVE=Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))/'ashen-circuit/save.json'
 def resource_path(rel):
  base=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent));return base/rel
 
@@ -56,12 +58,12 @@ LINKS={
 'workshop':['barracks','foundry','shaft'],'bridge':['vault','ante'],'shaft':['lower','workshop','ante'],'ante':['shaft','bridge','cradle'],'cradle':['ante']}
 
 # doors require scarce brass keys; unlocking is permanent
-LOCKS={tuple(sorted(x)) for x in [('barracks','workshop'),('vault','bridge'),('foundry','workshop'),('pumps','brig'),('workshop','shaft')]}
+LOCKS={tuple(sorted(x)) for x in [('barracks','workshop'),('lower','shaft'),('foundry','workshop'),('pumps','brig'),('workshop','shaft')]}
 RELAY_ROOM={'relay_a':'Aether','relay_b':'Thermal','relay_c':'Cryonic'}
 
 STORY={
 'gate':[("RIAN","There it is. The Caelus Engine."),("TESS","A mountain pretending to be a machine."),("MAREK","And the Dominion has scaffolding on it. Subtle."),("BRANN","We stop the awakening, retrieve the survey team, and leave."),("MAREK","You brought enough grenades to leave?"),("BRANN","I brought enough to redefine the entrance."),("RIAN","Then we'd better get started.")],
-'intake':[("TESS","These lamps were dead in the reconnaissance sketches."),("MAREK","They're restoring systems from the outside inward."),("RIAN","Stay linked. When two charge sigils light, combine techniques."),("BRANN","Meaning I should not detonate anything alone?"),("MAREK","It means wait until I can make it electrically irresponsible." )],
+'intake':[("TESS","These lamps were dead in the reconnaissance sketches."),("MAREK","They're restoring systems from the outside inward."),("RIAN","Look for training tomes in the caches. A Link tome teaches us a combined technique."),("BRANN","Meaning I should not detonate anything alone?"),("MAREK","It means wait until I can make it electrically irresponsible." )],
 'nexus':[("MAREK","Three restoration relays. Aether, thermal, cryonic."),("TESS","Break all three and the cradle loses its restraints."),("BRANN","Loses? I thought we wanted it restrained."),("MAREK","The restraints are also feeding it. Ancient engineers enjoyed irony."),("RIAN","Three wings. We choose the order. Save your Link charges for hard fights.")],
 'archive':[("TESS","The crystals are memories."),("VOICE","Operator... return... Vharos awaits a command."),("MAREK","Do not answer the haunted filing cabinet."),("TESS","I wasn't going to."),("BRANN","You leaned toward it."),("TESS","Academically.")],
 'foundry':[("BRANN","Those unfinished machines are watching us."),("MAREK","They have no heads."),("BRANN","Then they will not see where I place the charge."),("RIAN","Move before he improves the architecture.")],
@@ -74,8 +76,9 @@ STORY={
 class Hero:
  def __init__(self,name,job,weapon,element,hp,mp,powr,mag,spd,skill,rate):
   self.name,self.job,self.weapon,self.element=name,job,weapon,element; self.maxhp,self.hp=hp,hp; self.maxmp,self.mp=mp,mp
-  self.pow,self.mag,self.spd=powr,mag,spd; self.skill,self.rate=skill,rate; self.gauge=random.randint(25,65); self.guard=False;self.buffs={}
+  self.pow,self.mag,self.spd=powr,mag,spd; self.base_spd=spd; self.defense=0; self.resist=0; self.skill,self.rate=skill,rate; self.gauge=random.randint(25,65); self.guard=False;self.buffs={}
  def alive(self): return self.hp>0
+ def recharge(self): return self.rate + max(0,self.spd-self.base_spd)*.6
 
 def new_party(): return [
  Hero('Rian','Frostguard','Sword','Ice',440,58,43,27,22,"Winter's Standard",31),
@@ -87,7 +90,7 @@ ENEMIES={
 'scout':('Dominion Scout',115,24,18,14,GOLD),'drone':('Repair Drone',90,21,21,16,CYAN),'mite':('Wire Mite',72,18,14,24,PURPLE),
 'guard':('Iron Guard',185,32,27,13,STEEL),'wisp':('Aether Wisp',130,21,36,26,CYAN),'soldier':('Dominion Lancer',210,38,25,19,RED),
 'golem':('Furnace Golem',330,45,35,10,GOLD),'serpent':('Coolant Serpent',240,39,34,23,GREEN),
-'vael':('Commander Vael',1250,48,42,26,RED),'dragon':('Vharos, Ashen Dragon',3100,61,55,24,PURPLE)}
+'vael':('Commander Vael',1900,48,42,26,RED),'dragon':('Vharos, Ashen Dragon',4600,61,55,24,PURPLE)}
 
 class Enemy:
  def __init__(self,key,scale=1):
@@ -97,20 +100,7 @@ class Enemy:
 
 FORMATIONS=[['scout','drone'],['mite','mite','drone'],['guard','scout'],['wisp','mite'],['soldier','drone'],['guard','wisp'],['serpent','mite'],['golem'],['soldier','guard']]
 
-ARTS={
- 'Rian':[('Frost Edge',6),('Crystal Guard',7),('Glacial Formation',12)],
- 'Marek':[('Rail Shot',6),('Galvanize',7),('Chain Mend',14),('Defibrillate',18)],
- 'Tess':[('Venom Cut',5),('Corrode',7),('Wither',7),('Nerve Toxin',11)],
- 'Brann':[('Frag Grenade',7),('Incendiary',9),('Shaped Charge',12)]}
-
-# participant indices, required story phase: 0=start, 1=one relay, 2=Vael, 3=all relays
-LINKS_TECH={
- 'Aurora Circuit':((0,1),0),'Plague Canister':((2,3),0),
- 'Cryotoxin':((0,2),1),'Thermal Fracture':((0,3),1),'Neuroshock':((1,2),1),'Thunderhead':((1,3),1),
- 'Permafrost Protocol':((0,1,2),2),'Extinction Event':((1,2,3),2),
- 'Zero Hour':((0,1,2,3),3)}
-
-class Game:
+class Game(ProgressionMixin):
  def __init__(self):
   pygame.mixer.pre_init(22050,-16,1,256); pygame.init()
   self.full=False; self.screen=pygame.display.set_mode((W*SCALE,H*SCALE));pygame.display.set_caption('The Ashen Circuit')
@@ -122,6 +112,7 @@ class Game:
   self.weapon=0;self.armor=0;self.steps=0;self.dialog=[];self.dindex=0;self.room_menu=0
   self.enemies=[];self.turn_actor=0;self.cmd=0;self.submenu=None;self.target=0;self.log=[];self.log_wait=0;self.boss=None
   self.manual_page=0;self.manual_type='party'
+  self.treasure=make_treasure(ROOMS);self.init_progression()
   self.playtime=0;self.last_tick=pygame.time.get_ticks();self.toast='';self.toast_t=0;self.shake=0;self.moving=False
   self.stars=[(random.randrange(W),random.randrange(H),random.choice([1,1,2])) for _ in range(80)]
   self.joy=None;self.axis_latch=[0,0];self.pad_buttons=set()
@@ -155,24 +146,40 @@ class Game:
   SAVE.parent.mkdir(parents=True,exist_ok=True)
   data={'room':self.room,'prev':self.prev,'px':self.px,'py':self.py,'flags':list(self.flags),'locks':[list(x) for x in self.open_locks],
    'keys':self.keys,'gold':self.gold,'items':self.items,'weapon':self.weapon,'armor':self.armor,'playtime':self.playtime,
-   'party':[{'hp':h.hp,'mp':h.mp,'gauge':h.gauge,'buffs':h.buffs} for h in self.party],
-   'cleared_encounters':sorted(self.world.cleared),'save_version':2}
-  SAVE.write_text(json.dumps(data));self.toast='Game saved';self.toast_t=100
+   'party':[{'hp':h.hp,'mp':h.mp,'gauge':h.gauge,'buffs':h.buffs,
+             'stats':{stat:getattr(h,stat) for stat in STATS}} for h in self.party],
+   'learned_tomes':sorted(self.learned),'opened_chests':sorted(self.opened_chests),
+   'cleared_encounters':sorted(self.world.cleared),'save_version':3}
+  temporary=SAVE.with_suffix('.tmp');temporary.write_text(json.dumps(data));temporary.replace(SAVE)
+  self.toast='Game saved';self.toast_t=100
 
  def load(self):
   try:
    d=json.loads(SAVE.read_text());self.room=d['room'];self.prev=d.get('prev');self.px=d.get('px',160);self.py=d.get('py',110)
    self.flags=set(d['flags']);self.open_locks={tuple(x) for x in d['locks']};self.keys=d['keys'];self.gold=d['gold'];self.items=d['items'];self.weapon=d['weapon'];self.armor=d['armor'];self.playtime=d['playtime']
-   self.party=new_party()
-   for h,v in zip(self.party,d['party']):h.hp=v['hp'];h.mp=v['mp'];h.gauge=v.get('gauge',0);h.buffs=v.get('buffs',{})
+   self.party=new_party();self.init_progression()
+   for h,v in zip(self.party,d['party']):
+    for stat,value in v.get('stats',{}).items():
+     if stat in STATS:setattr(h,stat,int(value))
+    h.hp=clamp(v['hp'],0,h.maxhp);h.mp=clamp(v['mp'],0,h.maxmp);h.gauge=v.get('gauge',0);h.buffs=v.get('buffs',{})
+   self.learned=set(d.get('learned_tomes',[])) & ALL_TOMES
+   valid={c.uid for chests in self.treasure.values() for c in chests}
+   self.opened_chests=set(d.get('opened_chests',[])) & valid
+   if d.get('save_version',1)<3:
+    backup=SAVE.with_name('save-before-tomes.json')
+    if not backup.exists():backup.write_bytes(SAVE.read_bytes())
+    self.open_locks &= LOCKS
+    self.keys=min(self.keys,max(0,len(self.flags & set(RELAY_ROOM))-len(self.open_locks)))
    self.world.cleared=set(d.get('cleared_encounters',[]));self.world.arrive()
    self.state='field';self.toast='Save loaded';self.toast_t=120
-  except Exception:self.new_game()
+  except (ValueError,KeyError,OSError,TypeError) as error:
+   print(f'Could not load save: {error}',file=sys.stderr)
+   self.state='title';self.toast='Save could not be read. N: new game.';self.toast_t=600
 
  def new_game(self):
   self.__dict__.update(room='gate',prev=None,px=160,py=110,flags=set(),open_locks=set(),keys=0,gold=0,items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1},weapon=0,armor=0,playtime=0,party=new_party(),state='field')
-  self.world.reset()
-  self.start_dialog(STORY['gate']);self.flags.add('seen_gate')
+  self.init_progression();self.world.reset()
+  self.start_dialog(STORY['gate']+[('RIAN','Four training caches by the entrance. Take the tomes before we meet the patrols.'),('SYSTEM','Approach a chest and press A / Z. Tomes teach techniques; stat items are assigned in Items & Growth.')]);self.flags.add('seen_gate')
 
  def start_dialog(self,lines):self.dialog=lines;self.dindex=0;self.state='dialog'
  def say(self,name,line):self.start_dialog([(name,line)])
@@ -198,8 +205,7 @@ class Game:
  def room_event(self,r):
   if r in RELAY_ROOM and r not in self.flags:
    self.flags.add(r);self.keys+=1;self.items['Potion']+=2
-   count=len(self.flags&{'relay_a','relay_b','relay_c'});unlock='NEW DUAL LINKS SYNCHRONIZED.' if count==1 else 'ZERO HOUR SYNCHRONIZED.' if count==3 else 'LINK LATTICE STABILIZED.'
-   self.start_dialog([('MAREK',f"{RELAY_ROOM[r]} relay exposed. Stand back."),('SYSTEM',f'RELAY SEVERED — one brass key recovered. {unlock}'),('TESS','The whole complex felt that.'),('RIAN','Good. Let it know we are coming.')])
+   self.start_dialog([('MAREK',f"{RELAY_ROOM[r]} relay exposed. Stand back."),('SYSTEM','RELAY SEVERED - one brass key and two Potions recovered.'),('TESS','The whole complex felt that.'),('RIAN','Good. Let it know we are coming.')])
   if r=='cradle' and 'dragon_down' not in self.flags:self.start_dialog([('VAEL','You are too late.'),('MAREK','Vael? You should be unconscious.'),('VAEL','The Engine requires no commander. Only a target.'),('SYSTEM','CAELUS LANCE: ACQUIRING'),('TESS','The dragon is the focusing array.'),('RIAN','Then we break it before—'),('SYSTEM','CAELUS LANCE: FIRED'),('BRANN','...The western horizon.'),('RIAN','We cannot undo that shot. We can make it the last.')]);self.flags.add('pre_dragon')
 
  def start_battle(self,keys,boss=None):
@@ -212,7 +218,9 @@ class Game:
    if e.key in (pygame.K_RETURN,pygame.K_z,pygame.K_SPACE):self.interact()
 
  def interact(self):
-  # relay terminals and treasure are room-entry events; central console gives status
+  chest=self.chest_in_reach()
+  if chest and self.open_chest(chest):return
+  # Treasure requires proximity; consoles retain the room's interaction.
   if self.room=='nexus':
    n=len(self.flags&{'relay_a','relay_b','relay_c'});self.say('SYSTEM',f'RESTORATION FEEDS: {3-n} active. CRADLE SHIELD: '+('offline' if n==3 else 'engaged'))
   elif self.room=='workshop' and 'shop_used' not in self.flags:
@@ -220,7 +228,7 @@ class Game:
   elif self.room=='vault' and 'vault_loot' not in self.flags:
    self.flags.add('vault_loot');self.weapon=2;self.items['Bomb']+=2;self.say('SYSTEM','Found: Arclight weapons and 2 Bombs. Weapon grade maximized.')
   elif self.room=='brig' and 'brig_loot' not in self.flags:
-   self.flags.add('brig_loot');self.keys+=1;self.items['Phoenix Gear']+=1;self.say('PRISONER','Vael dropped this brass key. Take it—and this revival gear.')
+   self.flags.add('brig_loot');self.items['Phoenix Gear']+=1;self.say('PRISONER','Take this revival gear. The bridge is reached through the armament vault; its service route is open.')
   elif self.room=='barracks':self.shop()
   else:self.say('MAREK',random.choice(['Nothing useful. Remarkably decorative, though.','Dead conduit. Even the dust has dust.','If it starts humming, stop touching it.']))
 
@@ -256,7 +264,8 @@ class Game:
    elif e.key in (pygame.K_LEFT,pygame.K_a,pygame.K_RIGHT,pygame.K_d):self.cmd=(self.cmd+3)%len(commands)
    elif e.key in (pygame.K_RETURN,pygame.K_z,pygame.K_SPACE):
     c=commands[self.cmd]
-    if c==hero.skill and hero.gauge<100:self.log=[f'{c} is still recharging.'];self.log_wait=35
+    if c==hero.skill and not self.knows(hero,c):self.log=['Find the personal technique tome in a chest.'];self.log_wait=35
+    elif c==hero.skill and hero.gauge<100:self.log=[f'{c} is still recharging.'];self.log_wait=35
     elif c=='Link' and not self.ready_links():self.log=['No Link technique is ready.'];self.log_wait=35
     elif c in ('Attack','Defend'):self.execute(hero,c)
     elif c==hero.skill:self.execute(hero,c)
@@ -264,20 +273,14 @@ class Game:
 
  def commands(self,h):return ['Attack',h.skill,'Arts','Link','Item','Defend']
 
- def link_phase(self):
-  relays=len(self.flags&{'relay_a','relay_b','relay_c'})
-  return 3 if relays==3 else 2 if 'vael_down' in self.flags else 1 if relays else 0
-
  def ready_links(self):
-  phase=self.link_phase();out=[]
-  for name,(people,needed) in LINKS_TECH.items():
-   if needed<=phase and all(self.party[i].alive() and self.party[i].gauge>=100 for i in people):out.append(name)
-  return out
+  return [name for name,(people,_) in LINKS_TECH.items()
+          if name in self.learned and all(self.party[i].alive() and self.party[i].gauge>=100 for i in people)]
 
  def get_submenu(self,h):
-  if self.submenu=='Arts':return [f'{n} {cost}MP' for n,cost in ARTS[h.name]]
+  if self.submenu=='Arts':return [f'{n} {cost}MP' for n,cost in self.known_arts(h)] or ['(Find tomes in chests)']
   if self.submenu=='Link':return self.ready_links() or ['(No Link ready)']
-  return [f'{k} x{v}' for k,v in self.items.items() if v>0] or ['(Empty)']
+  return [f'{k} x{self.items.get(k,0)}' for k in CONSUMABLES if self.items.get(k,0)>0] or ['(Empty)']
 
  def use_sub(self,h,opt):
   if opt.startswith('('):return
@@ -309,6 +312,7 @@ class Game:
   self.world.request_action(h,c)
 
  def resolve_command(self,h,c):
+  if not self.command_available(h,c):return
   foes=[e for e in self.enemies if e.alive()];lines=[]
   if not foes:return
   t=self.world.target if self.world.target in foes else min(foes,key=lambda x:x.hp)
@@ -371,6 +375,7 @@ class Game:
   self.world.request_action(self.party[self.turn_actor],name,link=True)
 
  def resolve_link(self,name):
+  if name not in self.ready_links():return
   foes=[e for e in self.enemies if e.alive()];people,_=LINKS_TECH[name]
   if not foes:return
   for i in people:self.party[i].gauge=0
@@ -429,7 +434,7 @@ class Game:
   if e.alive() and not slowed and t.alive():
    special=e.key in ('vael','dragon') and e.turn%3==0
    p=e.mag if special else e.pow
-   d=max(1,int(p*(1.5 if special else 1)+random.randint(-5,7)-self.armor*5))
+   d=max(1,int(p*(1.5 if special else 1)+random.randint(-5,7)-self.armor*5-(t.resist if special or e.key=='wisp' else t.defense)))
    if weak:d=int(d*.7)
    if t.guard:d//=2
    if t.buffs.get('defense',0):d=int(d*.7)
@@ -440,7 +445,7 @@ class Game:
 
  def finish_enemy_round(self):
   for h in self.party:
-   if h.alive():h.gauge=min(100,h.gauge+h.rate)
+   if h.alive():h.gauge=min(100,h.gauge+h.recharge())
    h.guard=False
    if h.buffs.get('regen',0):self.heal(h,h.maxhp*.06)
    for k in list(h.buffs):h.buffs[k]=max(0,h.buffs[k]-1)
@@ -460,8 +465,8 @@ class Game:
   if self.world.busy:return
   self.world.finish_victory()
   if self.boss=='vael':
-   self.flags.add('vael_down');self.armor=max(2,self.armor);self.keys+=1
-   self.start_dialog([('VAEL','You think the relays were restraints? They were the ignition sequence.'),('TESS','He wanted us to sever them.'),('MAREK','No. He needed anyone to sever them. Their controls reject Dominion blood.'),('RIAN','Then we reach the cradle first.'),('SYSTEM','Commander defeated. Armor grade maximized. Brass key recovered. TRIPLE LINKS SYNCHRONIZED.')])
+   self.flags.add('vael_down');self.armor=max(2,self.armor)
+   self.start_dialog([('VAEL','You think the relays were restraints? They were the ignition sequence.'),('TESS','He wanted us to sever them.'),('MAREK','No. He needed anyone to sever them. Their controls reject Dominion blood.'),('RIAN','Then we reach the cradle first.'),('SYSTEM','Commander defeated. Armor grade maximized. Search the wing caches for triple Link tomes.')])
   elif self.boss=='dragon':
    self.flags.add('dragon_down');self.state='ending';self.dindex=0
   else:self.state='field'
@@ -470,13 +475,14 @@ class Game:
 
  def menu_input(self,e):
   if e.type!=pygame.KEYDOWN:return
-  opts=['Party & Arts','Link Manual','Save','Return to field','Quit to title']
+  opts=['Items & Growth','Party & Arts','Link Manual','Save','Return to field','Quit to title']
   if e.key in (pygame.K_UP,pygame.K_w):self.room_menu=(self.room_menu-1)%len(opts)
   elif e.key in (pygame.K_DOWN,pygame.K_s):self.room_menu=(self.room_menu+1)%len(opts)
   elif e.key in (pygame.K_ESCAPE,pygame.K_x):self.state='field'
   elif e.key in (pygame.K_RETURN,pygame.K_z):
    c=opts[self.room_menu]
-   if c=='Party & Arts':self.manual_type='party';self.manual_page=0;self.state='manual'
+   if c=='Items & Growth':self.state='bag';self.bag_hero=None;self.bag_confirm=False;self.bag_message=''
+   elif c=='Party & Arts':self.manual_type='party';self.manual_page=0;self.state='manual'
    elif c=='Link Manual':self.manual_type='links';self.manual_page=0;self.state='manual'
    elif c=='Save':self.state='field';self.save()
    elif c=='Return to field':self.state='field'
@@ -492,7 +498,7 @@ class Game:
    return True
   if e.type==pygame.JOYBUTTONDOWN:
    self.pad_buttons.add(e.button)
-   key=pygame.K_z if e.button==0 else pygame.K_x if e.button==1 else pygame.K_ESCAPE if e.button in (4,6,7) else pygame.K_UP if e.button==11 else pygame.K_DOWN if e.button==12 else pygame.K_LEFT if e.button==13 else pygame.K_RIGHT if e.button==14 else None
+   key=pygame.K_n if e.button==3 and self.state=='title' else pygame.K_z if e.button==0 else pygame.K_x if e.button==1 else pygame.K_ESCAPE if e.button in (4,6,7) else pygame.K_UP if e.button==11 else pygame.K_DOWN if e.button==12 else pygame.K_LEFT if e.button==13 else pygame.K_RIGHT if e.button==14 else None
    if key is not None:return self.event(pygame.event.Event(pygame.KEYDOWN,key=key))
   if e.type==pygame.JOYBUTTONUP:
    self.pad_buttons.discard(e.button);return True
@@ -520,6 +526,7 @@ class Game:
   elif self.state=='battle':self.battle_input(e)
   elif self.state=='victory' and e.type==pygame.KEYDOWN and e.key in (pygame.K_z,pygame.K_RETURN,pygame.K_SPACE):self.end_victory()
   elif self.state=='menu':self.menu_input(e)
+  elif self.state=='bag':self.bag_input(e)
   elif self.state=='manual' and e.type==pygame.KEYDOWN:
    if e.key in (pygame.K_ESCAPE,pygame.K_x):self.state='menu'
    elif e.key in (pygame.K_LEFT,pygame.K_UP,pygame.K_a,pygame.K_w):self.manual_page=max(0,self.manual_page-1)
@@ -566,7 +573,8 @@ class Game:
   self.canvas.blit(text('An original 16-bit dungeon RPG',self.font),(79,74))
   blink=(pygame.time.get_ticks()//500)%2
   if blink:self.canvas.blit(text('ENTER  Continue / Begin',self.font),(91,143))
-  if SAVE.exists():self.canvas.blit(text('N  New Game',self.small),(126,158))
+  if SAVE.exists():self.canvas.blit(text('N / Xbox Y  New Game',self.small),(113,158))
+  if self.toast_t:label(self.canvas,self.toast,8,171,CYAN,limit=75)
 
  def draw_room(self):
   self.world.draw_scene()
@@ -590,25 +598,19 @@ class Game:
   self.world.draw_scene()
 
  def draw_menu(self):
-  self.draw_room();self.box(24,40,272,126);self.canvas.blit(text('FIELD MENU',self.big,GOLD),(34,47));opts=['Party & Arts','Link Manual','Save','Return to field','Quit to title']
-  for i,o in enumerate(opts):self.canvas.blit(text(('> ' if i==self.room_menu else '  ')+o,self.font,GOLD if i==self.room_menu else WHITE),(38,73+i*14))
-  self.canvas.blit(text(f'Weapon grade {self.weapon}/2  Armor grade {self.armor}/2',self.small),(157,75));self.canvas.blit(text(' '.join(f'{k}:{v}' for k,v in self.items.items()),self.small),(157,90));self.canvas.blit(text(f'Playtime {int(self.playtime//60):02}:{int(self.playtime%60):02}',self.small),(157,106));self.canvas.blit(text('Xbox: Stick/D-pad  A Select  B Back  Start Menu',self.small,CYAN),(38,149))
+  self.draw_room();panel(self.canvas,(8,25,304,148))
+  label(self.canvas,'FIELD MENU',18,34,GOLD,scale=2)
+  opts=['Items & Growth','Party & Arts','Link Manual','Save','Return to field','Quit to title']
+  for i,o in enumerate(opts):label(self.canvas,('> ' if i==self.room_menu else '  ')+o,18,58+i*15,GOLD if i==self.room_menu else WHITE)
+  label(self.canvas,f'WEAPON {self.weapon}/2',179,61,CYAN)
+  label(self.canvas,f'ARMOR  {self.armor}/2',179,74,CYAN)
+  label(self.canvas,f'TOMES  {len(self.learned)}/{len(ALL_TOMES)}',179,91,WHITE)
+  label(self.canvas,f'CHESTS {len(self.opened_chests)}/73',179,104,WHITE)
+  label(self.canvas,f'TIME   {int(self.playtime//60):02}:{int(self.playtime%60):02}',179,122,WHITE)
+  label(self.canvas,'D-PAD: SELECT   A: CONFIRM   B: BACK',18,160,CYAN)
 
  def draw_manual(self):
-  self.canvas.fill((11,14,24));self.box(10,10,300,160)
-  if self.manual_type=='party':
-   i=self.manual_page%4;h=self.party[i];self.draw_party_member(i,54,111,2,1,1.25)
-   self.canvas.blit(text(h.name.upper(),self.big,GOLD),(94,24));self.canvas.blit(text(h.job,self.font,CYAN),(95,46));self.canvas.blit(text(f'{h.weapon}  |  {h.element}',self.font),(95,60))
-   self.canvas.blit(text('ARTS',self.font,GOLD),(95,80))
-   for n,(art,cost) in enumerate(ARTS[h.name]):self.canvas.blit(text(f'{art}  {cost}MP',self.small),(95,94+n*11))
-   self.canvas.blit(text('PERSONAL',self.font,GOLD),(19,133));self.canvas.blit(text(h.skill,self.font),(83,133));self.canvas.blit(text(f'{i+1}/4   Left/Right: character   B: back',self.small,STEEL),(72,155))
-  else:
-   names=list(LINKS_TECH);page=self.manual_page%3;chunk=names[page*3:page*3+3]
-   self.canvas.blit(text('LINK TECHNIQUES',self.big,GOLD),(72,22));self.canvas.blit(text('All listed participants must have a full charge.',self.small,CYAN),(45,46))
-   for row,name in enumerate(chunk):
-    people,phase=LINKS_TECH[name];who=' + '.join(self.party[i].name for i in people);unlocked=phase<=self.link_phase();y=67+row*26
-    self.canvas.blit(text(name,self.font,GOLD if unlocked else STEEL),(27,y));self.canvas.blit(text(who+('' if unlocked else '  [locked]'),self.small),(27,y+12))
-   self.canvas.blit(text(f'{page+1}/3   Left/Right: page   B: back',self.small,STEEL),(80,155))
+  self.draw_progression_manual()
 
  def draw_ending(self):
   lines=[('TESS','The western sky is still burning.'),('BRANN','The villages had warning sirens. Some will have made it.'),('MAREK','Some.'),('RIAN','Vael wanted one shot to prove the old world could be owned.'),('TESS','And we proved it could bleed.'),('RIAN','Tomorrow we count the cost. Tonight, we make sure no one rebuilds this place.'),('SYSTEM','VHAROS TERMINATED — CAELUS ENGINE ENTERING FINAL DARK'),('MAREK','For once, a machine says exactly the right thing.')]
@@ -623,6 +625,7 @@ class Game:
   elif self.state in ('battle','victory'):self.draw_battle()
   elif self.state=='menu':self.draw_menu()
   elif self.state=='manual':self.draw_manual()
+  elif self.state=='bag':self.draw_bag()
   elif self.state=='gameover':self.canvas.fill(INK);self.canvas.blit(text('THE CIRCUIT CLAIMED YOU',self.big,RED),(55,69));self.canvas.blit(text('Press any key to restore the last save.',self.font),(71,104))
   elif self.state=='ending':self.draw_ending()
   size=self.screen.get_size();scaled=pygame.transform.scale(self.canvas,(min(size[0],size[1]*16//9),min(size[1],size[0]*9//16)));self.screen.fill((0,0,0));self.screen.blit(scaled,((size[0]-scaled.get_width())//2,(size[1]-scaled.get_height())//2));pygame.display.flip()
@@ -630,7 +633,8 @@ class Game:
  def run(self):
   go=True
   while go:
-   for e in pygame.event.get():go=self.event(e)
+   for e in pygame.event.get():
+    if self.event(e) is False:go=False
    self.update();self.draw();self.clock.tick(FPS)
   pygame.quit()
 
@@ -652,7 +656,27 @@ def smoke_test(g):
   if not g.world.busy:break
  g.draw()
  assert g.enemies[0].hp<hp and g.turn_actor==1, 'Queued attack failed'
- print('SEAMLESS SMOKE OK: packaged sprites, visible contact, staging, targeting, attack, HUD')
+ # Exercise real treasure, controller menus, and persistence against a temporary
+ # save, never against the player's data.
+ import tempfile
+ global SAVE
+ original_save=SAVE
+ with tempfile.TemporaryDirectory(prefix='ashen-smoke-') as folder:
+  try:
+   SAVE=Path(folder)/'save.json'
+   g.new_game();g.state='field';g.px,g.py=g.treasure['gate'][0].pos
+   g.event(pygame.event.Event(pygame.JOYBUTTONDOWN,button=0))
+   assert g.knows(g.party[0],'Frost Edge'), 'Chest tome was not learned'
+   g.state='field';g.event(pygame.event.Event(pygame.JOYBUTTONDOWN,button=7))
+   g.event(pygame.event.Event(pygame.JOYBUTTONDOWN,button=0))
+   assert g.state=='bag', 'Controller could not open growth menu'
+   g.bag_index=g.bag_options().index('Strength +1')
+   old=g.party[0].pow
+   for _ in range(3):g.event(pygame.event.Event(pygame.JOYBUTTONDOWN,button=0))
+   g.load();assert g.party[0].pow==old+1, 'Permanent growth did not survive loading'
+   g.state='bag';g.draw()
+  finally:SAVE=original_save
+ print('SMOKE OK: packaged sprites, seamless contact, movement, targeting, attack, tomes, stat items, Xbox menus, saves')
  pygame.quit()
 
 if __name__=='__main__':

@@ -182,7 +182,8 @@ class WorldCombat:
         self.patrols=[Patrol(uid,pawns)]
 
     def make_enemy(self, key, pos):
-        enemy=self.enemy_factory(key,1+self.rooms[self.g.room][1]*.035)
+        # Deeper wings must still matter after collecting permanent growth.
+        enemy=self.enemy_factory(key,1+self.rooms[self.g.room][1]*.12)
         return Pawn(enemy,*pos,home=pos,goal=pos)
 
     def field_move(self, dx, dy):
@@ -292,6 +293,9 @@ class WorldCombat:
 
     def request_action(self, hero, command, link=False):
         if self.busy or self.g.state!='battle':return
+        if not self.g.command_available(hero,command,link):
+            self.g.log=['Technique unavailable: find its tome, charge, or restore MP.']
+            return
         if command in SINGLE:
             alive=[p for p in self.active.pawns if p.unit.alive()]
             if not alive:return
@@ -674,6 +678,8 @@ class WorldCombat:
     def draw_scene(self, hud=True):
         self.draw_ground()
         layers=[(115,lambda:self.draw_machine(28)),(115,lambda:self.draw_machine(270))]
+        for chest in self.g.treasure[self.g.room]:
+            layers.append((chest.pos[1],lambda chest=chest:self.draw_chest(chest)))
         for patrol in self.patrols:
             for p in patrol.pawns:
                 layers.append((p.y,lambda p=p:self.draw_pawn(p)))
@@ -683,6 +689,24 @@ class WorldCombat:
         if hud:
             if self.g.state in ('battle','victory'):self.draw_battle_hud()
             else:self.draw_field_hud()
+
+    def draw_chest(self, chest):
+        s=self.g.canvas;x,y=chest.pos
+        opened=chest.uid in self.g.opened_chests
+        trim=MUTED if opened else CYAN if chest.tome else GOLD
+        pygame.draw.ellipse(s,(16,24,28),(x-9,y-2,20,5))
+        pygame.draw.rect(s,(14,22,29),(x-9,y-12,18,13))
+        pygame.draw.rect(s,(80,61,49),(x-7,y-10,14,9))
+        pygame.draw.rect(s,trim,(x-8,y-11,16,4),1)
+        pygame.draw.line(s,trim,(x-6,y-6),(x+6,y-6))
+        for dx in (-6,5):pygame.draw.line(s,trim,(x+dx,y-10),(x+dx,y-2))
+        if opened:
+            pygame.draw.rect(s,(12,18,24),(x-6,y-9,12,4))
+            pygame.draw.rect(s,MUTED,(x-8,y-16,16,4),1)
+        elif chest.tome:
+            pygame.draw.rect(s,(225,221,185),(x-2,y-11,5,4))
+            pygame.draw.line(s,(53,80,89),(x,y-11),(x,y-8))
+        else:pygame.draw.rect(s,GOLD,(x-1,y-7,3,3))
 
     def draw_effects(self):
         s=self.g.canvas
@@ -743,7 +767,10 @@ class WorldCombat:
         label(s,f'K{g.keys}  P{g.items["Potion"]}  R{len(g.flags & {"relay_a","relay_b","relay_c"})}/3',232,4,CYAN)
         label(s,'DOMINION RESTORATION SITE',5,12,MUTED)
         near=next(((d,p) for d,p in self.exits() if distance((g.px,g.py),p)<30),None)
-        if near:
+        chest=g.chest_in_reach()
+        if chest:
+            msg='A: OPEN '+('TOME CACHE' if chest.tome else 'SUPPLY CACHE')
+        elif near:
             dest,p=near
             locked=tuple(sorted((g.room,dest))) in self.locks and tuple(sorted((g.room,dest))) not in g.open_locks
             msg=('LOCKED: ' if locked else 'TO: ')+self.rooms[dest][0]
@@ -764,7 +791,7 @@ class WorldCombat:
             message=g.log[-1] if g.log else 'CONTACT'
             if g.state=='battle' and not self.busy and not g.submenu and g.cmd==1:
                 h=g.party[min(g.turn_actor,3)]
-                message=h.skill+(' / READY' if h.gauge>=100 else ' / RECHARGING')
+                message=h.skill+(' / FIND TOME' if not g.knows(h,h.skill) else ' / READY' if h.gauge>=100 else ' / RECHARGING')
             label(s,message,5,12,WHITE,limit=77)
         panel(s,(2,137,124,41))
         panel(s,(128,137,190,41))
@@ -812,7 +839,7 @@ class WorldCombat:
             for index,opt in enumerate(opts[page*6:page*6+6],page*6):
                 local=index-page*6;col=local//3;row=local%3
                 color=GOLD if index==g.target else WHITE
-                if g.submenu=='Arts' and int(opt.rsplit(' ',1)[1][:-2])>hero.mp:color=MUTED
+                if g.submenu=='Arts' and (opt.startswith('(') or int(opt.rsplit(' ',1)[1][:-2])>hero.mp):color=MUTED
                 label(s,('> ' if index==g.target else '  ')+opt,7+col*157,150+row*9,color,limit=37)
             return
         label(s,hero.name+' / COMMAND',8,140,GOLD)
@@ -820,6 +847,6 @@ class WorldCombat:
         short=['ATTACK','PERSONAL','ARTS','LINK','ITEM','DEFEND']
         for i,name in enumerate(short):
             row=i%3;col=i//3
-            disabled=(i==1 and hero.gauge<100) or (i==3 and not g.ready_links())
+            disabled=(i==1 and (hero.gauge<100 or not g.knows(hero,hero.skill))) or (i==2 and not g.known_arts(hero)) or (i==3 and not g.ready_links())
             color=MUTED if disabled else GOLD if i==g.cmd else WHITE
             label(s,('>' if i==g.cmd else ' ')+name,6+col*60,150+row*9,color)
