@@ -16,7 +16,9 @@ def resource_path(rel):
 
 INK=(14,16,27); WHITE=(234,230,211); BLUE=(43,76,112); STEEL=(57,67,79)
 CYAN=(75,211,214); GOLD=(232,175,66); RED=(201,66,73); GREEN=(76,177,101); PURPLE=(135,91,170)
-CHARACTER_SCALE=(1.05,1.0,.98,1.10)
+# One source pixel is always one native-canvas pixel. Character size belongs to
+# the authored sheet, never to a runtime scale multiplier.
+CHARACTER_SCALE=(1.0,1.0,1.0,1.0)
 FOLLOWER_DX,FOLLOWER_DY=22,10
 
 def clamp(v,a,b): return max(a,min(b,v))
@@ -110,7 +112,8 @@ class Game(ProgressionMixin):
   self.canvas=pygame.Surface((W,H)); self.clock=pygame.time.Clock()
   self.font=pygame.font.Font(None,12);self.small=pygame.font.Font(None,10);self.tiny=pygame.font.Font(None,9);self.big=pygame.font.Font(None,22)
   self.party_sheet=pygame.image.load(str(resource_path('assets/characters/party_motion_v1.png'))).convert_alpha()
-  self.battle_sheet=pygame.image.load(str(resource_path('assets/characters/party_battle_v6.png'))).convert_alpha()
+  self.combat_body_sheet=pygame.image.load(str(resource_path('assets/characters/party_combat_bodies_v2.png'))).convert_alpha()
+  self.combat_arm_sheet=pygame.image.load(str(resource_path('assets/characters/party_combat_arms_v2.png'))).convert_alpha()
   self.state='title';self.party=new_party();self.room='gate';self.prev=None;self.px,self.py=160,110;self.facing=0
   self.flags=set();self.open_locks=set();self.keys=0;self.gold=0;self.items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1}
   self.weapon=0;self.armor=0;self.steps=0;self.dialog=[];self.dindex=0;self.room_menu=0
@@ -604,15 +607,10 @@ class Game(ProgressionMixin):
  def box(self,x,y,w,h,fill=(21,27,46)):
   pygame.draw.rect(self.canvas,INK,(x-2,y-2,w+4,h+4));pygame.draw.rect(self.canvas,WHITE,(x-1,y-1,w+2,h+2),1);pygame.draw.rect(self.canvas,fill,(x,y,w,h))
 
- def draw_party_member(self,index,x,y,direction=0,frame=1,scale=1):
+ def draw_party_member(self,index,x,y,direction=0,frame=1):
   # Sheet directions are down, left, right, up; field facing uses up/right/down/left.
-  scale=self.party_draw_scale(index,scale)
   img=self.party_sheet.subsurface(self.party_source_rect(index,direction,frame))
-  if scale!=1:img=pygame.transform.scale(img,(int(32*scale),int(48*scale)))
-  self.canvas.blit(img,(int(x-img.get_width()/2),int(y-img.get_height())))
-
- def party_draw_scale(self,index,scale=1):
-  return scale*CHARACTER_SCALE[index]
+  self.canvas.blit(img,(int(x-16),int(y-48)))
 
  def party_source_rect(self,index,direction=0,frame=1):
   sheet_dir={0:3,1:2,2:0,3:1}.get(direction,direction)

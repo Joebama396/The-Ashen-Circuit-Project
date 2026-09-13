@@ -1,5 +1,6 @@
 import json
 import itertools
+import inspect
 import os
 from pathlib import Path
 import tempfile
@@ -12,6 +13,7 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT']='1'
 import pygame
 import game
 import combat_poses
+from tools.build_combat_layers import generate_atlases
 
 
 class SeamlessTests(unittest.TestCase):
@@ -193,7 +195,7 @@ class SeamlessTests(unittest.TestCase):
     def test_named_idle_combat_stances_match_each_character_role(self):
         g=self.battle()
         self.assertEqual(
-            ['low_sword_ready','high_ready','split_arm_profile','low_ready'],
+            ['low_sword_ready','high_ready','split-arm','low_ready'],
             [p.animation_state for p in g.world.heroes])
 
     def test_arm_source_rects_change_without_swapping_the_body_rect(self):
@@ -232,13 +234,15 @@ class SeamlessTests(unittest.TestCase):
                     body_mask=pygame.mask.from_surface(
                         g.world.combat_body_sheet.subsurface(body_rect))
                     self.assertGreater(arm_mask.overlap_area(
-                        body_mask,combat_poses.ARM_SOURCE_OFFSET),0)
+                        body_mask,(0,0)),0)
 
     def test_combat_arm_pixels_are_sliced_from_the_authored_sprite_sheet(self):
         g=self.battle()
-        source_colors={tuple(g.battle_sheet.get_at((x,y)))
-                       for y in range(g.battle_sheet.get_height())
-                       for x in range(g.battle_sheet.get_width())}
+        source=pygame.image.load(str(game.resource_path(
+            'assets/characters/party_battle_v6.png'))).convert_alpha()
+        source_colors={tuple(source.get_at((x,y)))
+                       for y in range(source.get_height())
+                       for x in range(source.get_width())}
         for hero,states in combat_poses.HERO_POSES.items():
             for state in states:
                 for layer in combat_poses.ARM_LAYERS:
@@ -259,9 +263,64 @@ class SeamlessTests(unittest.TestCase):
         g.world.set_animation(pawn,'extended_isosceles')
         self.assertEqual(before,g.world.combat_body_source_rect(pawn))
 
+    def test_runtime_character_renderer_is_strictly_one_to_one(self):
+        g=self.battle();pawn=g.world.heroes[0]
+        self.assertEqual((1.,1.,1.,1.),game.CHARACTER_SCALE)
+        with patch('pygame.transform.scale') as resize:
+            g.canvas.fill((0,0,0,0));g.world.draw_pawn(pawn)
+            self.assertFalse(resize.called)
+            g.state='field';g.canvas.fill((0,0,0,0));g.world.draw_pawn(pawn)
+            self.assertFalse(resize.called)
+
+    def test_runtime_combat_rig_only_blits_locked_atlas_frames(self):
+        source=inspect.getsource(combat_poses.CombatSpriteRig)
+        self.assertNotIn('pygame.draw',source)
+        self.assertNotIn('pygame.mask',source)
+        self.assertNotIn('transform.scale',source)
+        self.assertNotIn('transform.rotate',source)
+        self.assertEqual('low_ready',combat_poses.LOCKED_STANCE_BLUEPRINTS['Brann']['idle'])
+        self.assertEqual('high_ready',combat_poses.LOCKED_STANCE_BLUEPRINTS['Merek']['idle'])
+        self.assertEqual('split-arm',combat_poses.LOCKED_STANCE_BLUEPRINTS['Tess']['idle'])
+        self.assertEqual(
+            ('jump_start','overhead_raise','downward_landing_strike'),
+            combat_poses.LOCKED_STANCE_BLUEPRINTS['Rian']['jump'])
+
+    def test_ready_pose_silhouettes_match_ranged_blueprints(self):
+        g=self.battle()
+        def arm_cell(hero,state,layer='front'):
+            return g.combat_arm_sheet.subsurface(
+                combat_poses.arm_source_rect(hero,state,layer))
+        merek=arm_cell(1,'high_ready').get_bounding_rect()
+        self.assertGreater(merek.height,merek.width)
+        brann_low=pygame.mask.from_surface(arm_cell(3,'low_ready'))
+        brann_fire=pygame.mask.from_surface(arm_cell(3,'shouldered_firing'))
+        self.assertGreater(brann_low.centroid()[1],brann_fire.centroid()[1]+3)
+        self.assertGreater(pygame.mask.from_surface(
+            arm_cell(3,'low_ready','rear')).count(),0)
+
+    def test_all_melee_states_reuse_the_unchanged_base_body(self):
+        g=self.battle()
+        for hero in (0,2):
+            body=combat_poses.body_source_rect(hero)
+            before=pygame.image.tostring(
+                g.combat_body_sheet.subsurface(body),'RGBA')
+            for state in combat_poses.HERO_POSES[hero]:
+                pawn=g.world.heroes[hero]
+                g.world.set_animation(pawn,state,0)
+                self.assertEqual(body,g.world.combat_body_source_rect(pawn))
+                self.assertEqual(before,pygame.image.tostring(
+                    g.combat_body_sheet.subsurface(body),'RGBA'))
+
+    def test_checked_combat_atlases_match_locked_source_blueprints(self):
+        bodies,arms=generate_atlases(Path(game.__file__).resolve().parent)
+        self.assertEqual(pygame.image.tostring(bodies,'RGBA'),
+                         pygame.image.tostring(self.g.combat_body_sheet,'RGBA'))
+        self.assertEqual(pygame.image.tostring(arms,'RGBA'),
+                         pygame.image.tostring(self.g.combat_arm_sheet,'RGBA'))
+
     def test_tess_uses_split_idle_but_rian_jump_state_triggers(self):
         g=self.battle();pawn=g.world.heroes[2];target=g.world.active.pawns[0]
-        self.assertEqual('split_arm_profile',pawn.animation_state)
+        self.assertEqual('split-arm',pawn.animation_state)
         pawn.x,pawn.y=70,105;pawn.home=pawn.pos
         target.x,target.y=230,90;target.home=target.pos
         pawn.unit.atb=100;g.world.target=target.unit
@@ -556,12 +615,15 @@ class SeamlessTests(unittest.TestCase):
                     self.settle();g.world.update(1/60)
                     actors=[]
                     for p in g.world.heroes:
-                        direction={0:3,1:2,2:0,3:1}[p.direction]
-                        source=g.party_sheet.subsurface(((direction*8)*32,p.hero*48,32,48))
-                        scale=.82*game.CHARACTER_SCALE[p.hero]
-                        image=pygame.transform.scale(source,(int(32*scale),int(48*scale)))
+                        image=pygame.Surface(
+                            (combat_poses.COMBAT_CELL_W,combat_poses.COMBAT_CELL_H),
+                            pygame.SRCALPHA)
+                        g.world.combat_rig.draw(
+                            image,p.hero,p.animation_state,
+                            *combat_poses.COMBAT_GROUND_ANCHOR,p.direction==1)
                         actors.append((p.unit.name,pygame.mask.from_surface(image),
-                                       (int(p.x-image.get_width()/2),int(p.y-image.get_height()))))
+                                       (int(p.x-combat_poses.COMBAT_GROUND_ANCHOR[0]),
+                                        int(p.y-combat_poses.COMBAT_GROUND_ANCHOR[1]))))
                     for p in patrol.pawns:
                         image=g.world.enemy_image(p)
                         actors.append((p.unit.name,pygame.mask.from_surface(image),

@@ -49,9 +49,11 @@ still fails, share `~/.local/state/ashen-circuit/launcher.log` and
 
 Enemies patrol the dungeon visibly. Touch one and the same room enters combat:
 the party runs to spread-out positions, then the active-time clocks begin. There
-is no separate arena, camera cut, or sprite swap. Every party member has a visible
-colored ATB bar in the lower-right panel. A white outline and selection arrow
-mean that character is ready for input. LB/RB switches between ready characters.
+is no separate arena or camera cut. At contact, each party pawn switches from its
+32×48 exploration source array to its native-size 64×64 layered combat array
+without changing its canvas pixel ratio. Every party member has a visible colored
+ATB bar in the lower-right panel. A white outline and selection arrow mean that
+character is ready for input. LB/RB switches between ready characters.
 
 After forming up, each character visibly draws their designated weapon and enters
 an animated, wide-footed combat stance. Sword and dagger attacks choose their
@@ -76,17 +78,23 @@ as soon as that animation finishes.
 
 Every party pawn exposes a named animation state and frame. Exploration sets
 `moving_up`, `moving_down`, `moving_left`, or `moving_right` while cycling the
-eight arm-sway walk frames. Combat uses a sprite-sheet-driven layered rig: it
-slices textured rear-arm and front-arm/weapon pixels from
-`party_battle_v6.png`, pivots those layers at character-specific shoulders, and
-stitches them around one fixed body/torso source rect. Stance changes only swap
-the two arm source rects; the body cell never moves or changes. No procedural
-weapon rectangles or flat arm lines are drawn over the torso.
+eight arm-sway walk frames. Combat swaps to two true-size transparent atlases:
+`party_combat_bodies_v2.png` supplies fixed, continuous bodies and
+`party_combat_arms_v2.png` supplies distinct rear-arm and front-arm/weapon
+frames. Stance changes only select new arm source rectangles; the body source
+rectangle never moves or changes. Every frame is blitted 1:1 with no runtime
+rotation, magnification, or procedural weapon geometry.
+
+`tools/build_combat_layers.py` is the only place that transforms the larger
+authored `party_battle_v6.png` source. It bakes the locked shoulder pivots,
+angles, offsets, and hand attachments into the runtime PNGs ahead of time. This
+keeps the poses reproducible while preventing asset-authoring operations from
+leaking into the render loop.
 
 Rian idles in `low_sword_ready`; a long-range jump chains `jump_start` into
 `overhead_raise` and `downward_landing_strike`. Marek idles in `high_ready`, fires
 from `extended_isosceles`, then briefly enters `recoil`. Tess uses a persistent
-`split_arm_profile` while sharing Rian's jump-state logic. Brann has a separate
+`split-arm` while sharing Rian's jump-state logic. Brann has a separate
 grenadier profile with `low_ready`, `shouldered_firing`, and `heavy_recoil`.
 
 The lower HUD is one compact plate instead of two bulky windows. It keeps all four
@@ -103,11 +111,12 @@ Normal patrols return when you leave and re-enter their rooms. Repair Drones
 always drop a Potion, allowing supply farming. Bosses and treasure do not respawn.
 Enemy strength increases by region to account for permanent character growth.
 
-The approved overworld character designs are unchanged. Their new eight-frame
-walk cycles alternate legs and arms while adding restrained coat-pleat and long
-hair follow-through. Relative scales remain Rian 105%, Marek 100%, Tess 98%,
-Brann 110%. Enemy art remains a code-drawn baseline, now animated and mobile in
-combat. All gameplay screenshots are PNGs.
+The approved overworld character designs are unchanged. Their eight-frame walk
+cycles alternate legs and arms while adding restrained coat-pleat and long-hair
+follow-through. Exploration and combat now share a single native pixel scale:
+one sprite pixel equals one 320×180 canvas pixel for every party member. Enemy
+art remains a code-drawn baseline, animated and mobile in combat. All gameplay
+screenshots are PNGs.
 
 Dialogue, field prompts, combat messages, commands, HP/MP values, and ATB panels
 now use a high-contrast 5x7 pixel alphabet designed for the native 320x180 canvas.

@@ -1,8 +1,8 @@
 # Character Sprite Kit
 
-The seamless-combat build uses `party_overworld_v4.png` for both exploration and
-combat. The old battle sheet and high-detail references remain available for
-art editing; the approved character pixels have not been redrawn for this update.
+The seamless-combat build swaps between `party_motion_v1.png` for exploration
+and the two `party_combat_*_v1.png` layer atlases for battle. All runtime party
+frames are drawn at 1:1 native-canvas scale.
 
 ## `party_overworld_v4.png`
 
@@ -25,11 +25,21 @@ or limb from leaking into an adjacent animation frame.
 - Order: Rian, Marek, Tess, Brann
 - Dedicated left-facing three-quarter profiles: half of each face and one near eye remain visible
 - Rian's shoulder-length frost-white/ice-blue hair gives her a distinct silhouette from Marek
-- Gameplay scale: Rian 105%, Marek 100%, Tess 98%, Brann 110%
 - Every character is isolated before packing, so no weapon, cape, or limb crosses into a neighboring cell
 
-These are the higher-detail side-view combat poses from the previous battle
-layout. They are retained as references and are not loaded by the current game.
+This is the authored source for the runtime combat layer atlases. It is processed
+offline and is not resized by the running game.
+
+## `party_combat_bodies_v2.png` and `party_combat_arms_v2.png`
+
+- Runtime frame: 64×64 transparent pixels
+- Body atlas: four fixed torso/body frames
+- Arm atlas: separate rear/front rows and one column per named state
+- Shared ground anchor: `(32, 58)` in every frame
+- Rendering: direct 1:1 source-rectangle blits only
+
+`tools/build_combat_layers.py` regenerates both atlases from the authored battle
+sheet using the locked blueprints in `combat_poses.py`.
 
 ## `party_battle_reference_v5.png`
 

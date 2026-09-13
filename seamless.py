@@ -4,6 +4,7 @@ No screenshots, alternate arenas, sprite resizing on contact, or battle wipes:
 every actor retains its room coordinates when an encounter begins.
 """
 from dataclasses import dataclass, field
+import itertools
 import math
 import pygame
 from combat_poses import (HERO_COMBAT_PROFILES, RIAN_PROFILE, MAREK_PROFILE,
@@ -87,11 +88,12 @@ class WorldCombat:
         self.rooms,self.links,self.locks=rooms,links,locks
         self.enemy_factory=enemy_factory
         self.link_tech=link_tech
-        self.combat_rig=CombatSpriteRig(game.party_sheet,game.battle_sheet)
+        self.combat_rig=CombatSpriteRig(game.combat_body_sheet,game.combat_arm_sheet)
         # Kept as public aliases for sprite/debug tooling. Rendering ownership
         # lives in CombatSpriteRig rather than the world/body draw loop.
         self.arm_sheet=self.combat_rig.arm_sheet
         self.combat_body_sheet=self.combat_rig.body_sheet
+        self._collision_masks={}
         self.clock=0.
         self.reset()
 
@@ -142,6 +144,38 @@ class WorldCombat:
 
     def set_walk_animation(self,p):
         self.set_animation(p,MOVING_STATES[p.direction] if p.moving else 'idle')
+
+    def collision_mask(self,p,state=None):
+        """Return a union silhouette safe for either horizontal facing."""
+        if p.hero>=0:
+            state=state or p.profile.idle_state
+            key=('hero',p.hero,state)
+            if key not in self._collision_masks:
+                union=pygame.mask.Mask((64,64))
+                for facing_right in (False,True):
+                    image=pygame.Surface((64,64),pygame.SRCALPHA)
+                    self.combat_rig.draw(image,p.hero,state,32,58,facing_right)
+                    union.draw(pygame.mask.from_surface(image),(0,0))
+                padded=pygame.mask.Mask(union.get_size())
+                for dx,dy in itertools.product((-1,0,1),repeat=2):
+                    padded.draw(union,(dx,dy))
+                union=padded
+                self._collision_masks[key]=(union,(32,58))
+            return self._collision_masks[key]
+        key=('enemy',p.unit.key)
+        if key not in self._collision_masks:
+            union=pygame.mask.Mask((80,76))
+            saved=(p.direction,p.moving,self.clock)
+            for direction,moving,clock in itertools.product((1,3),(False,True),(0.,1/7)):
+                p.direction,p.moving,self.clock=direction,moving,clock
+                union.draw(pygame.mask.from_surface(self.enemy_image(p)),(0,0))
+            p.direction,p.moving,self.clock=saved
+            padded=pygame.mask.Mask(union.get_size())
+            for dx,dy in itertools.product((-1,0,1),repeat=2):
+                padded.draw(union,(dx,dy))
+            union=padded
+            self._collision_masks[key]=(union,(40,69))
+        return self._collision_masks[key]
 
     def exits(self):
         destinations=self.links[self.g.room]
@@ -319,27 +353,72 @@ class WorldCombat:
         enemies=self.active.pawns
         cx=sum(p.x for p in enemies)/len(enemies)
         cy=sum(p.y for p in enemies)/len(enemies)
-        # Candidate slots surround the actual contact point, not a fixed team row.
-        candidates=[(x,y) for y in (62,89,116) for x in (72,105,138,171,204,237,274)]
-        occupied=[pygame.Rect(24,61,31,55),pygame.Rect(266,61,31,55)]
+        # Candidate feet positions use native canvas pixels. Combat art is never
+        # enlarged to fill a slot: entering battle swaps the exploration frame
+        # for a 64x64 combat rig at the same 1:1 pixel ratio.
+        candidates=[(x,y) for y in (58,75,92,109,126)
+                    for x in range(64,257,16)]
+        static=[]
+        for rect in (pygame.Rect(24,61,31,55),pygame.Rect(266,61,31,55)):
+            static.append((pygame.mask.Mask(rect.size,fill=True),rect.topleft))
         for p in enemies:
-            bounds=self.enemy_image(p).get_bounding_rect()
-            radius=max(40-bounds.left,bounds.right-40)
-            height=69-bounds.top+4  # Includes the full hover/idle range.
-            occupied.append(pygame.Rect(p.x-radius,p.y-height,2*radius,height+3))
+            mask,anchor=self.collision_mask(p)
+            static.append((mask,(round(p.x-anchor[0]),round(p.y-anchor[1]))))
         ideals=[(min(p.x for p in enemies)-45,cy+8),
                 (max(p.x for p in enemies)+55,cy-18),(cx-8,cy-44),(cx+15,cy+47)]
-        # Plan with everyone visible, including KO poses, and avoid machinery.
+        candidates=[q for q in candidates if self.walkable(q)]
+
+        def mask_overlap(mask,origin,other,other_origin):
+            return mask.overlap_area(other,(
+                other_origin[0]-origin[0],other_origin[1]-origin[1]))
+
+        entries=[]
         for i,p in enumerate(self.heroes):
-            def score(q):
-                rect=pygame.Rect(q[0]-14,q[1]-44,28,44)
-                overlap=sum(rect.clip(r.inflate(4,2)).w*rect.clip(r.inflate(4,2)).h for r in occupied)
-                return overlap*100+distance(q,ideals[i])+distance(q,p.pos)*.12
-            valid=[q for q in candidates if self.walkable(q)]
-            goal=min(valid,key=score)
-            candidates.remove(goal)
-            p.goal=goal
-            occupied.append(pygame.Rect(goal[0]-14,goal[1]-44,28,44))
+            options=[]
+            mask,anchor=self.collision_mask(p,p.profile.idle_state)
+            for q in candidates:
+                origin=(round(q[0]-anchor[0]),round(q[1]-anchor[1]))
+                overlap=sum(mask_overlap(mask,origin,other,other_origin)
+                            for other,other_origin in static)
+                travel=distance(q,ideals[i])+distance(q,p.pos)*.12
+                options.append((mask,origin,overlap,travel))
+            entries.append(options)
+
+        # Search collision-free assignments with the widest silhouettes first.
+        # Candidate lists are already ordered by how closely they preserve the
+        # authored battlefield spread, so the first complete solution is both
+        # clear and fast to find during enemy contact.
+        order=(3,0,2,1)
+        ranked={i:sorted(range(len(candidates)),
+                         key=lambda slot:(entries[i][slot][2],entries[i][slot][3]))
+                for i in range(4)}
+        chosen={}
+
+        def compatible(hero,slot):
+            mask,origin,static_overlap,_=entries[hero][slot]
+            if static_overlap:return False
+            for other,other_slot in chosen.items():
+                other_mask,other_origin,_,_=entries[other][other_slot]
+                if mask_overlap(mask,origin,other_mask,other_origin):return False
+            return True
+
+        def place(depth):
+            if depth==len(order):return True
+            hero=order[depth]
+            for slot in ranked[hero]:
+                if slot in chosen.values() or not compatible(hero,slot):continue
+                chosen[hero]=slot
+                if place(depth+1):return True
+                del chosen[hero]
+            return False
+
+        if not place(0):
+            # Extremely crowded modded encounters still receive deterministic
+            # distinct slots instead of preventing combat from beginning.
+            for hero in order:
+                chosen[hero]=next(slot for slot in ranked[hero]
+                                  if slot not in chosen.values())
+        for i,slot in chosen.items():self.heroes[i].goal=candidates[slot]
 
     def request_action(self, hero, command, link=False):
         # Enemy animation and player menu ownership are independent. The user
@@ -510,13 +589,27 @@ class WorldCombat:
         """Everyone keeps their footing and shifts around the shared arena."""
         if not self.active:return
         acting=self.action['actors'] if self.action else ()
-        for index,p in enumerate(self.heroes+self.active.pawns):
+        pawns=self.heroes+self.active.pawns
+        for index,p in enumerate(pawns):
             if any(p is actor for actor in acting) or not p.unit.alive():continue
             phase=self.clock*(.68+(index%3)*.08)+index*1.9
             radius=4 if p.hero>=0 else 6
             goal=self.clamp_point((p.home[0]+math.sin(phase)*radius,
                                     p.home[1]+math.sin(phase*.73+1.2)*3))
+            saved=(p.x,p.y,p.direction,p.moving)
             p.step(goal,(12 if p.hero>=0 else 15)*dt)
+            mask,anchor=self.collision_mask(p)
+            origin=(int(p.x-anchor[0]),int(p.y-anchor[1]))
+            blocked=False
+            for other in pawns:
+                if other is p or not other.unit.alive():continue
+                other_mask,other_anchor=self.collision_mask(other)
+                other_origin=(int(other.x-other_anchor[0]),
+                              int(other.y-other_anchor[1]))
+                if mask.overlap(other_mask,(other_origin[0]-origin[0],
+                                            other_origin[1]-origin[1])):
+                    blocked=True;break
+            if blocked:p.x,p.y,p.direction,p.moving=saved
 
     def update(self, dt):
         self.clock+=dt
@@ -839,12 +932,11 @@ class WorldCombat:
 
     def draw_combat_arm(self,p,layer,x,y):
         self.combat_rig.draw_arm(
-            self.g.canvas,p.hero,p.animation_state,layer,x,y,
-            self.g.party_draw_scale(p.hero,.72),p.direction==1)
+            self.g.canvas,p.hero,p.animation_state,layer,x,y,p.direction==1)
 
     def draw_combat_body(self,p,x,y):
         self.combat_rig.draw_body(
-            self.g.canvas,p.hero,x,y,self.g.party_draw_scale(p.hero,.72),p.direction==1)
+            self.g.canvas,p.hero,x,y,p.direction==1)
 
     def draw_pawn(self, p):
         g=self.g;s=g.canvas
@@ -855,21 +947,20 @@ class WorldCombat:
             if (g.state=='battle' and p.hero==g.turn_actor and
                 (not self.busy or self.enemy_action_active)):
                 pygame.draw.ellipse(s,ELEMENT_COLORS[p.hero],(x-12,ground_y-4,24,7),1)
-                pygame.draw.polygon(s,GOLD,[(x-3,y-44),(x+3,y-44),(x,y-41)])
+                pygame.draw.polygon(s,GOLD,[(x-3,y-58),(x+3,y-58),(x,y-55)])
             if p.unit.alive():
                 combat_rig=(g.state in ('battle','victory') and self.phase!='forming')
                 if combat_rig:
                     # The rig owns slice selection and rear/body/front stitching;
                     # the world renderer supplies only state, anchor and facing.
                     self.combat_rig.draw(
-                        s,p.hero,p.animation_state,x,y,
-                        g.party_draw_scale(p.hero,.72),p.direction==1)
-                else:g.draw_party_member(p.hero,x,y,p.direction,p.animation_frame,.82)
+                        s,p.hero,p.animation_state,x,y,p.direction==1)
+                else:g.draw_party_member(p.hero,x,y,p.direction,p.animation_frame)
             else:
                 # A consistent prone pose, not an abruptly missing party member.
                 src=g.party_sheet.subsurface(pygame.Rect(4*32,p.hero*48,32,48))
-                img=pygame.transform.rotate(pygame.transform.scale(src,(23,32)),90)
-                img.set_alpha(130);s.blit(img,(x-16,ground_y-14))
+                img=pygame.transform.rotate(src,90)
+                img.set_alpha(130);s.blit(img,(x-24,ground_y-18))
         elif p.unit.alive():
             s.blit(self.enemy_image(p),(x-40,y-69))
             if g.state=='battle':

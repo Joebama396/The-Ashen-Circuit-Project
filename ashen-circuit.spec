@@ -5,7 +5,7 @@ a = Analysis(
     ['game.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets/characters/party_motion_v1.png', 'assets/characters'), ('assets/characters/party_battle_v6.png', 'assets/characters'), ('assets/audio/battle_theme_1.mp3', 'assets/audio')],
+    datas=[('assets/characters/party_motion_v1.png', 'assets/characters'), ('assets/characters/party_combat_bodies_v2.png', 'assets/characters'), ('assets/characters/party_combat_arms_v2.png', 'assets/characters'), ('assets/audio/battle_theme_1.mp3', 'assets/audio')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

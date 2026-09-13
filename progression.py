@@ -275,7 +275,7 @@ class ProgressionMixin:
         if self.manual_type == 'party':
             i = self.manual_page % 4
             h = self.party[i]
-            self.draw_party_member(i, 39, 83, 2, 1, 1)
+            self.draw_party_member(i, 39, 83, 2, 1)
             label(s, h.name, 72, 12, GOLD, scale=2)
             label(s, h.job + ' / ' + h.element, 72, 30, CYAN)
             stats = [('HP', f'{h.hp}/{h.maxhp}'), ('MP', f'{h.mp}/{h.maxmp}'),
