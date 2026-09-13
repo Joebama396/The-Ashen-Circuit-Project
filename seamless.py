@@ -6,6 +6,8 @@ every actor retains its room coordinates when an encounter begins.
 from dataclasses import dataclass, field
 import math
 import pygame
+from combat_poses import (HERO_COMBAT_PROFILES, RIAN_PROFILE, MAREK_PROFILE,
+                          TESS_PROFILE, BRANN_PROFILE, CombatSpriteRig)
 from pixel_ui import label, panel
 
 WHITE=(235,231,218)
@@ -34,28 +36,6 @@ def facing(a, b):
     return (1 if dx > 0 else 3) if abs(dx) >= abs(dy) else (2 if dy > 0 else 0)
 
 
-@dataclass(frozen=True)
-class AnimationProfile:
-    """Names the render states and frames owned by one animation style."""
-    name: str
-    ready_state: str = 'battle_stance'
-    recoil_state: str = ''
-    state_frames: tuple = ()
-
-    def frame_for(self, state, fallback=0):
-        return dict(self.state_frames).get(state, fallback)
-
-
-# Tess deliberately shares Rian's exact state map until her own attack sheet is
-# authored. Marek and Brann retain separate ranged profiles so renderers can
-# distinguish a light rail-pistol kick from a full-body launcher recoil.
-AGILE_MELEE_PROFILE=AnimationProfile(
-    'agile_melee', state_frames=(('jump_start',0),('mid_air',2),('land_attack',6)))
-MAREK_PROFILE=AnimationProfile(
-    'rail_medic','ready_stance','recoil',(('ready_stance',2),('recoil',6)))
-BRANN_PROFILE=AnimationProfile(
-    'grenadier','ready_stance','heavy_recoil',(('ready_stance',6),('heavy_recoil',2)))
-HERO_ANIMATION_PROFILES=(AGILE_MELEE_PROFILE,MAREK_PROFILE,AGILE_MELEE_PROFILE,BRANN_PROFILE)
 MOVING_STATES={0:'moving_up',1:'moving_right',2:'moving_down',3:'moving_left'}
 
 
@@ -74,6 +54,9 @@ class Pawn:
     animation_state: str = 'idle'
     animation_frame: int = 0
     animation_time: float = 0.
+    body_source_rect: object = None
+    rear_arm_source_rect: object = None
+    front_arm_source_rect: object = None
 
     @property
     def pos(self):
@@ -104,6 +87,11 @@ class WorldCombat:
         self.rooms,self.links,self.locks=rooms,links,locks
         self.enemy_factory=enemy_factory
         self.link_tech=link_tech
+        self.combat_rig=CombatSpriteRig(game.party_sheet,game.battle_sheet)
+        # Kept as public aliases for sprite/debug tooling. Rendering ownership
+        # lives in CombatSpriteRig rather than the world/body draw loop.
+        self.arm_sheet=self.combat_rig.arm_sheet
+        self.combat_body_sheet=self.combat_rig.body_sheet
         self.clock=0.
         self.reset()
 
@@ -146,10 +134,11 @@ class WorldCombat:
         if frame is None:
             if state in MOVING_STATES.values():
                 frame=int(p.animation_time*10)%8
-            elif p.profile:
-                frame=p.profile.frame_for(state,p.animation_frame)
             else:frame=0
         p.animation_frame=frame%8
+        if p.hero>=0:
+            p.rear_arm_source_rect=self.combat_rig.arm_rect(p.hero,state,'rear')
+            p.front_arm_source_rect=self.combat_rig.arm_rect(p.hero,state,'front')
 
     def set_walk_animation(self,p):
         self.set_animation(p,MOVING_STATES[p.direction] if p.moving else 'idle')
@@ -202,7 +191,7 @@ class WorldCombat:
         for i,h in enumerate(g.party):
             p=self.clamp_point((g.px+trail_x*i*22, g.py+trail_y*i*10))
             self.heroes.append(Pawn(h,*p,i,g.facing,home=p,goal=p,
-                                    profile=HERO_ANIMATION_PROFILES[i]))
+                                    profile=HERO_COMBAT_PROFILES[i]))
         self.path=[p.pos for p in reversed(self.heroes)]
         uid=f'{g.room}:0'
         if repopulate:
@@ -444,6 +433,13 @@ class WorldCombat:
                      'destinations':destinations,'endings':endings,'elapsed':0.,'duration':1.7 if link else 1.3,
                      'hit':False,'link':link,'enemy':False,'melee':melee,'motions':motions,
                      'resolve':lambda: g.resolve_link(command) if link else g.resolve_command(hero,command)}
+        for p,motion in zip(actors,motions):
+            if motion=='jump' and p.profile in (RIAN_PROFILE,TESS_PROFILE):
+                self.set_animation(p,'jump_start',0)
+            elif command not in SUPPORT and p.profile is MAREK_PROFILE:
+                self.set_animation(p,'extended_isosceles',0)
+            elif command not in SUPPORT and p.profile is BRANN_PROFILE:
+                self.set_animation(p,'shouldered_firing',0)
         self.phase='action';g.log=[command];g.log_wait=0
 
     def dispatch_pending_player(self):
@@ -508,12 +504,7 @@ class WorldCombat:
         for p in self.heroes:
             if not p.unit.alive() or p in acting:continue
             if self.phase=='forming' and p.moving:self.set_walk_animation(p)
-            elif p.unit.atb>=100 and p.profile.ready_state=='ready_stance':
-                self.set_animation(p,'ready_stance')
-            elif p.moving:self.set_walk_animation(p)
-            else:
-                frame=(2,6)[(int(self.clock*2.5)+p.hero)%2]
-                self.set_animation(p,'battle_stance',frame)
+            else:self.set_animation(p,p.profile.idle_state,0)
 
     def battle_roam(self,dt):
         """Everyone keeps their footing and shifts around the shared arena."""
@@ -579,8 +570,8 @@ class WorldCombat:
             jump_f=0.
             if motion=='jump' and t<.10:
                 f=0.;source,destination=start,start
-            elif motion=='jump' and t<.34:
-                jump_f=(t-.10)/.24;f=jump_f;source,destination=start,impact
+            elif motion=='jump' and t<.50:
+                jump_f=(t-.10)/.40;f=jump_f;source,destination=start,impact
             elif t<.34:
                 f=t/.34;source,destination=start,impact
             elif t<.64:
@@ -591,18 +582,26 @@ class WorldCombat:
             old=p.pos
             p.x=source[0]+(destination[0]-source[0])*f
             p.y=source[1]+(destination[1]-source[1])*f
-            p.air=math.sin(jump_f*math.pi)*20 if motion=='jump' and .10<=t<.34 else 0
+            p.air=math.sin(jump_f*math.pi)*20 if motion=='jump' and .10<=t<.50 else 0
             p.moving=distance(old,p.pos)>.1
             if p.moving:p.direction=facing(old,p.pos)
             elif a['targets']:p.direction=facing(p.pos,a['targets'][0].pos)
-            if motion=='jump' and p.profile is AGILE_MELEE_PROFILE:
-                state='jump_start' if t<.10 else 'mid_air' if t<.34 else 'land_attack' if t<.64 else MOVING_STATES[p.direction]
-                self.set_animation(p,state)
-            elif (not a['enemy'] and a['name'] not in SUPPORT and
-                  p.profile.recoil_state and .28<=t<(.56 if p.profile is BRANN_PROFILE else .50)):
-                self.set_animation(p,p.profile.recoil_state)
+            if (not a['enemy'] and motion=='jump' and
+                p.profile in (RIAN_PROFILE,TESS_PROFILE)):
+                state=('jump_start' if t<.10 else 'overhead_raise' if t<.30
+                       else 'downward_landing_strike' if t<.64 else p.profile.idle_state)
+                self.set_animation(p,state,0)
+            elif not a['enemy'] and a['name'] not in SUPPORT and p.profile is MAREK_PROFILE:
+                self.set_animation(p,'extended_isosceles' if t<.46 else
+                                   'recoil' if t<.58 else 'high_ready',0)
+            elif not a['enemy'] and a['name'] not in SUPPORT and p.profile is BRANN_PROFILE:
+                self.set_animation(p,'shouldered_firing' if t<.46 else
+                                   'heavy_recoil' if t<.62 else 'low_ready',0)
+            elif (not a['enemy'] and p.profile in (RIAN_PROFILE,TESS_PROFILE) and
+                  a['name'] not in SUPPORT and .30<=t<.64):
+                self.set_animation(p,'downward_landing_strike',0)
             elif p.moving:self.set_walk_animation(p)
-            else:self.set_animation(p,'attack_cast',6)
+            else:self.set_animation(p,p.profile.idle_state if p.profile else 'attack_cast',0)
         if t>=.46 and not a['hit']:
             a['hit']=True
             everyone=self.heroes+self.active.pawns
@@ -829,6 +828,24 @@ class WorldCombat:
         if flip:s=pygame.transform.flip(s,True,False)
         return s
 
+    def combat_body_source_rect(self,p):
+        """Combat torso/legs stay on one source rect while arm state changes."""
+        p.body_source_rect=self.combat_rig.body_rect(p.hero)
+        return p.body_source_rect
+
+    def combat_arm_source_rect(self,p,layer):
+        cached=p.rear_arm_source_rect if layer=='rear' else p.front_arm_source_rect
+        return cached or self.combat_rig.arm_rect(p.hero,p.animation_state,layer)
+
+    def draw_combat_arm(self,p,layer,x,y):
+        self.combat_rig.draw_arm(
+            self.g.canvas,p.hero,p.animation_state,layer,x,y,
+            self.g.party_draw_scale(p.hero,.72),p.direction==1)
+
+    def draw_combat_body(self,p,x,y):
+        self.combat_rig.draw_body(
+            self.g.canvas,p.hero,x,y,self.g.party_draw_scale(p.hero,.72),p.direction==1)
+
     def draw_pawn(self, p):
         g=self.g;s=g.canvas
         x,ground_y=int(p.x),int(p.y)
@@ -839,19 +856,15 @@ class WorldCombat:
                 (not self.busy or self.enemy_action_active)):
                 pygame.draw.ellipse(s,ELEMENT_COLORS[p.hero],(x-12,ground_y-4,24,7),1)
                 pygame.draw.polygon(s,GOLD,[(x-3,y-44),(x+3,y-44),(x,y-41)])
-            frame=p.animation_frame
-            if p.animation_state=='jump_start':y+=3
-            elif p.animation_state=='land_attack':y+=1
-            elif p.animation_state=='ready_stance' and p.profile is BRANN_PROFILE:y+=1
-            elif p.animation_state=='heavy_recoil':
-                sign=1 if p.direction==1 else -1
-                x-=sign*2;y-=1
-            elif p.animation_state=='recoil':y-=1
-            elif p.animation_state=='battle_stance':
-                y-=1 if int(self.clock*5+p.hero)%2 else 0
             if p.unit.alive():
-                g.draw_party_member(p.hero,x,y,p.direction,frame,.82)
-                self.draw_weapon(p,y)
+                combat_rig=(g.state in ('battle','victory') and self.phase!='forming')
+                if combat_rig:
+                    # The rig owns slice selection and rear/body/front stitching;
+                    # the world renderer supplies only state, anchor and facing.
+                    self.combat_rig.draw(
+                        s,p.hero,p.animation_state,x,y,
+                        g.party_draw_scale(p.hero,.72),p.direction==1)
+                else:g.draw_party_member(p.hero,x,y,p.direction,p.animation_frame,.82)
             else:
                 # A consistent prone pose, not an abruptly missing party member.
                 src=g.party_sheet.subsurface(pygame.Rect(4*32,p.hero*48,32,48))
@@ -869,55 +882,6 @@ class WorldCombat:
             if self.target is p.unit and self.targeting:
                 pygame.draw.ellipse(s,RED,(x-14,y-4,28,8),1)
                 pygame.draw.polygon(s,WHITE,[(x-3,y-39),(x+3,y-39),(x,y-35)])
-
-    def draw_weapon(self,p,y=None):
-        """Keep weapons visible in stance, then extend them through a strike."""
-        if self.g.state not in ('battle','victory') or self.phase=='forming' or p.hero<0:return
-        attacking=bool(self.action and p in self.action['actors'] and not self.action['enemy'])
-        progress=self.action['elapsed']/self.action['duration'] if attacking else 0
-        striking=attacking and .12<=progress<=.87
-        s=self.g.canvas;x=int(p.x);y=int(p.y-p.air) if y is None else int(y)
-        if attacking and self.action['targets']:
-            sign=1 if self.action['targets'][0].x>=p.x else -1
-        else:sign=1 if p.direction==1 else -1 if p.direction==3 else 1
-        recoil=p.animation_state=='recoil'
-        heavy_recoil=p.animation_state=='heavy_recoil'
-        hand=(x+sign*(6 if striking else 4),y-(21 if striking else 19))
-        outline=(12,18,25)
-        if p.hero==0:  # Rian's ice sword
-            tip=(hand[0]+sign*(18 if striking else 14),hand[1]-(10 if striking else 5))
-            pygame.draw.line(s,outline,hand,tip,4);pygame.draw.line(s,(184,230,242),hand,tip,2)
-            pygame.draw.line(s,CYAN,(hand[0]-sign*3,hand[1]-2),(hand[0]+sign*4,hand[1]+3),2)
-        elif p.hero==1:  # Marek braces the rail-pistol with both hands
-            if recoil:
-                muzzle=(hand[0]+sign*10,hand[1]-12)
-                pygame.draw.line(s,outline,hand,muzzle,7)
-                pygame.draw.line(s,(94,124,137),hand,muzzle,4)
-                pygame.draw.line(s,CYAN,(hand[0]+sign*2,hand[1]-2),muzzle,1)
-            else:
-                length=17 if striking else 14;bx=hand[0] if sign>0 else hand[0]-length
-                pygame.draw.rect(s,outline,(bx-1,hand[1]-3,length+2,7))
-                pygame.draw.rect(s,(94,124,137),(bx,hand[1]-2,length,4))
-                pygame.draw.line(s,CYAN,(bx+2,hand[1]-1),(bx+length-1,hand[1]-1))
-                pygame.draw.rect(s,(64,84,91),(bx+5,hand[1]+2,4,5))
-        elif p.hero==2:  # Tess draws both bio daggers
-            for offset in (-3,5):
-                h=(hand[0]-sign*2,hand[1]+offset)
-                tip=(h[0]+sign*(11 if striking else 8),h[1]-(4 if striking else 2))
-                pygame.draw.line(s,outline,h,tip,3);pygame.draw.line(s,(135,222,142),h,tip,1)
-        else:  # Brann shoulders the heavy grenade launcher
-            length=20 if striking else 17
-            if heavy_recoil:
-                muzzle=(hand[0]+sign*15,hand[1]-9)
-                pygame.draw.line(s,outline,(hand[0]-sign*3,hand[1]+3),muzzle,10)
-                pygame.draw.line(s,(125,90,61),hand,muzzle,6)
-                pygame.draw.rect(s,(217,133,55),(muzzle[0]-2,muzzle[1]-2,5,4))
-            else:
-                bx=hand[0] if sign>0 else hand[0]-length
-                pygame.draw.rect(s,outline,(bx-2,hand[1]-5,length+3,9))
-                pygame.draw.rect(s,(125,90,61),(bx,hand[1]-4,length,6))
-                pygame.draw.rect(s,(217,133,55),(bx+(length-4 if sign>0 else 1),hand[1]-3,5,4))
-                pygame.draw.line(s,(67,55,47),(x,hand[1]+1),(bx+8,hand[1]+7),3)
 
     def draw_scene(self, hud=True):
         self.draw_ground()

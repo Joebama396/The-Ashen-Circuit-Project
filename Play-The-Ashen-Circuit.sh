@@ -2,15 +2,22 @@
 # Run the adjacent AppImage without requiring a FUSE installation or mount.
 set -u
 launch_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-image="$launch_dir/The_Ashen_Circuit-1.3-x86_64.AppImage"
+image=''
+image_count=0
+for candidate in "$launch_dir"/The_Ashen_Circuit-*-x86_64.AppImage; do
+    if [ -f "$candidate" ]; then
+        image="$candidate"
+        image_count=$((image_count + 1))
+    fi
+done
+if [ "$image_count" -ne 1 ]; then
+    printf '%s\n' 'Keep this launcher in a folder containing exactly one The_Ashen_Circuit-*-x86_64.AppImage.' >&2
+    exit 1
+fi
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ashen-circuit"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/ashen-circuit/runtime"
 mkdir -p "$state_dir" "$cache_dir" || exit 1
 log="$state_dir/launcher.log"
-if [ ! -f "$image" ]; then
-    printf '%s\n' 'Keep this launcher next to The_Ashen_Circuit-1.3-x86_64.AppImage.' >&2
-    exit 1
-fi
 if [ "$(uname -m)" != x86_64 ]; then
     printf '%s\n' 'This build needs an Intel/AMD 64-bit Linux computer (x86_64).' >&2
     exit 1

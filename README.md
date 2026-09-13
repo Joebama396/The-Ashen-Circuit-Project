@@ -76,10 +76,18 @@ as soon as that animation finishes.
 
 Every party pawn exposes a named animation state and frame. Exploration sets
 `moving_up`, `moving_down`, `moving_left`, or `moving_right` while cycling the
-eight arm-sway walk frames. Rian's and Tess's shared agile-melee profile triggers
-`jump_start`, `mid_air`, and `land_attack` in sequence. Marek's rail-medic profile
-uses `ready_stance` at full ATB and `recoil` after firing; Brann's distinct
-grenadier profile uses a heavier braced `ready_stance` and `heavy_recoil`.
+eight arm-sway walk frames. Combat uses a sprite-sheet-driven layered rig: it
+slices textured rear-arm and front-arm/weapon pixels from
+`party_battle_v6.png`, pivots those layers at character-specific shoulders, and
+stitches them around one fixed body/torso source rect. Stance changes only swap
+the two arm source rects; the body cell never moves or changes. No procedural
+weapon rectangles or flat arm lines are drawn over the torso.
+
+Rian idles in `low_sword_ready`; a long-range jump chains `jump_start` into
+`overhead_raise` and `downward_landing_strike`. Marek idles in `high_ready`, fires
+from `extended_isosceles`, then briefly enters `recoil`. Tess uses a persistent
+`split_arm_profile` while sharing Rian's jump-state logic. Brann has a separate
+grenadier profile with `low_ready`, `shouldered_firing`, and `heavy_recoil`.
 
 The lower HUD is one compact plate instead of two bulky windows. It keeps all four
 HP, MP, and active-time rows visible while returning ten native pixels to the
@@ -213,7 +221,8 @@ battle-music lifecycle, finite treasure, stat effects, save migration, and bosse
 
 Run `python3 tools/preview_seamless.py --video` for staged gameplay PNGs and an
 optional MP4. Run `python3 tools/preview_progression.py` for treasure and growth
-menu PNGs. Neither preview touches a player's save.
+menu PNGs. Run `python3 tools/preview_combat_poses.py` for the layered arm/weapon
+stance PNGs. None of the preview tools touches a player's save.
 
 Full-playthrough balance and the requested roughly 90-minute pacing remain
 unverified. This is a playable prototype for testing the mechanics and art.

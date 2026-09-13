@@ -11,6 +11,7 @@ os.environ['SDL_AUDIODRIVER']='dummy'
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT']='1'
 import pygame
 import game
+import combat_poses
 
 
 class SeamlessTests(unittest.TestCase):
@@ -145,10 +146,10 @@ class SeamlessTests(unittest.TestCase):
         self.assertEqual('jump_start',pawn.animation_state)
         self.assertEqual(0,pawn.air)
         g.world.update(.13)
-        self.assertEqual('mid_air',pawn.animation_state)
+        self.assertEqual('overhead_raise',pawn.animation_state)
         self.assertGreater(pawn.air,6)
-        g.world.update(.30)
-        self.assertEqual('land_attack',pawn.animation_state)
+        g.world.update(.22)
+        self.assertEqual('downward_landing_strike',pawn.animation_state)
         self.settle()
 
     def test_overworld_sets_four_directional_moving_states_and_sway_frames(self):
@@ -169,20 +170,108 @@ class SeamlessTests(unittest.TestCase):
     def test_character_profiles_and_ranged_ready_recoil_states(self):
         g=self.battle()
         rian,marek,tess,brann=g.world.heroes
-        self.assertIs(rian.profile,tess.profile)
-        self.assertEqual('agile_melee',rian.profile.name)
-        self.assertEqual('rail_medic',marek.profile.name)
+        self.assertEqual(rian.profile.jump_sequence,tess.profile.jump_sequence)
+        self.assertEqual('swordsman',rian.profile.name)
+        self.assertEqual('dual_daggers',tess.profile.name)
+        self.assertEqual('pistol',marek.profile.name)
         self.assertEqual('grenadier',brann.profile.name)
 
-        for pawn,state in ((marek,'recoil'),(brann,'heavy_recoil')):
+        expected=((marek,'extended_isosceles','recoil','high_ready'),
+                  (brann,'shouldered_firing','heavy_recoil','low_ready'))
+        for pawn,firing,recoil,idle in expected:
             for e in g.enemies:e.atb=0
             pawn.unit.atb=100;g.world.target=g.world.active.pawns[0].unit
             g.world.queue_action(pawn.unit,'Attack')
+            self.assertEqual(firing,pawn.animation_state)
+            g.world.update(g.world.action['duration']*.20)
+            self.assertEqual(firing,pawn.animation_state)
             g.world.update(g.world.action['duration']*.31)
-            self.assertEqual(state,pawn.animation_state)
+            self.assertEqual(recoil,pawn.animation_state)
             self.settle()
-            pawn.unit.atb=100;g.world.update(1/60)
-            self.assertEqual('ready_stance',pawn.animation_state)
+            self.assertEqual(idle,pawn.animation_state)
+
+    def test_named_idle_combat_stances_match_each_character_role(self):
+        g=self.battle()
+        self.assertEqual(
+            ['low_sword_ready','high_ready','split_arm_profile','low_ready'],
+            [p.animation_state for p in g.world.heroes])
+
+    def test_arm_source_rects_change_without_swapping_the_body_rect(self):
+        g=self.battle();pawn=g.world.heroes[0]
+        body=g.world.combat_body_source_rect(pawn).copy()
+        idle=(g.world.combat_arm_source_rect(pawn,'rear').copy(),
+              g.world.combat_arm_source_rect(pawn,'front').copy())
+        self.assertNotEqual(idle[0],idle[1])
+        self.assertEqual(idle[0],pawn.rear_arm_source_rect)
+        self.assertEqual(idle[1],pawn.front_arm_source_rect)
+        g.world.set_animation(pawn,'overhead_raise',0)
+        raised=(g.world.combat_arm_source_rect(pawn,'rear').copy(),
+                g.world.combat_arm_source_rect(pawn,'front').copy())
+        self.assertEqual(body,g.world.combat_body_source_rect(pawn))
+        self.assertNotEqual(idle,raised)
+        self.assertEqual(raised[0],pawn.rear_arm_source_rect)
+        self.assertEqual(raised[1],pawn.front_arm_source_rect)
+
+    def test_every_named_arm_rect_contains_pixels_and_stays_inside_atlas(self):
+        g=self.battle()
+        for pawn in g.world.heroes:
+            for state in combat_poses.HERO_POSES[pawn.hero]:
+                for layer in ('rear','front'):
+                    rect=combat_poses.arm_source_rect(pawn.hero,state,layer)
+                    self.assertTrue(g.world.arm_sheet.get_rect().contains(rect))
+                    cell=g.world.arm_sheet.subsurface(rect)
+                    arm_mask=pygame.mask.from_surface(cell)
+                    self.assertGreater(arm_mask.count(),0)
+                    w,h=cell.get_size()
+                    for edge in (pygame.Rect(0,0,w,1),pygame.Rect(0,h-1,w,1),
+                                 pygame.Rect(0,0,1,h),pygame.Rect(w-1,0,1,h)):
+                        self.assertEqual(0,arm_mask.overlap_area(
+                            pygame.mask.Mask(edge.size,fill=True),edge.topleft))
+
+                    body_rect=combat_poses.body_source_rect(pawn.hero)
+                    body_mask=pygame.mask.from_surface(
+                        g.world.combat_body_sheet.subsurface(body_rect))
+                    self.assertGreater(arm_mask.overlap_area(
+                        body_mask,combat_poses.ARM_SOURCE_OFFSET),0)
+
+    def test_combat_arm_pixels_are_sliced_from_the_authored_sprite_sheet(self):
+        g=self.battle()
+        source_colors={tuple(g.battle_sheet.get_at((x,y)))
+                       for y in range(g.battle_sheet.get_height())
+                       for x in range(g.battle_sheet.get_width())}
+        for hero,states in combat_poses.HERO_POSES.items():
+            for state in states:
+                for layer in combat_poses.ARM_LAYERS:
+                    cell=g.world.arm_sheet.subsurface(
+                        combat_poses.arm_source_rect(hero,state,layer))
+                    colors={tuple(cell.get_at((x,y)))
+                            for y in range(cell.get_height())
+                            for x in range(cell.get_width())
+                            if cell.get_at((x,y)).a}
+                    self.assertTrue(colors)
+                    self.assertTrue(colors.issubset(source_colors))
+
+    def test_combat_world_delegates_layer_stitching_to_sprite_rig(self):
+        g=self.battle();pawn=g.world.heroes[1]
+        self.assertIs(g.world.arm_sheet,g.world.combat_rig.arm_sheet)
+        self.assertIs(g.world.combat_body_sheet,g.world.combat_rig.body_sheet)
+        before=g.world.combat_body_source_rect(pawn).copy()
+        g.world.set_animation(pawn,'extended_isosceles')
+        self.assertEqual(before,g.world.combat_body_source_rect(pawn))
+
+    def test_tess_uses_split_idle_but_rian_jump_state_triggers(self):
+        g=self.battle();pawn=g.world.heroes[2];target=g.world.active.pawns[0]
+        self.assertEqual('split_arm_profile',pawn.animation_state)
+        pawn.x,pawn.y=70,105;pawn.home=pawn.pos
+        target.x,target.y=230,90;target.home=target.pos
+        pawn.unit.atb=100;g.world.target=target.unit
+        g.world.queue_action(pawn.unit,'Attack')
+        g.world.update(.1)
+        self.assertEqual('jump_start',pawn.animation_state)
+        g.world.update(.13)
+        self.assertEqual('overhead_raise',pawn.animation_state)
+        g.world.update(.22)
+        self.assertEqual('downward_landing_strike',pawn.animation_state)
 
     def test_idle_battle_pose_differs_from_exploration_and_draws_weapon(self):
         g=self.battle();pawn=g.world.heroes[0]

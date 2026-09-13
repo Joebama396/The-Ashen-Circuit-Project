@@ -110,6 +110,7 @@ class Game(ProgressionMixin):
   self.canvas=pygame.Surface((W,H)); self.clock=pygame.time.Clock()
   self.font=pygame.font.Font(None,12);self.small=pygame.font.Font(None,10);self.tiny=pygame.font.Font(None,9);self.big=pygame.font.Font(None,22)
   self.party_sheet=pygame.image.load(str(resource_path('assets/characters/party_motion_v1.png'))).convert_alpha()
+  self.battle_sheet=pygame.image.load(str(resource_path('assets/characters/party_battle_v6.png'))).convert_alpha()
   self.state='title';self.party=new_party();self.room='gate';self.prev=None;self.px,self.py=160,110;self.facing=0
   self.flags=set();self.open_locks=set();self.keys=0;self.gold=0;self.items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1}
   self.weapon=0;self.armor=0;self.steps=0;self.dialog=[];self.dindex=0;self.room_menu=0
@@ -605,11 +606,17 @@ class Game(ProgressionMixin):
 
  def draw_party_member(self,index,x,y,direction=0,frame=1,scale=1):
   # Sheet directions are down, left, right, up; field facing uses up/right/down/left.
-  scale*=CHARACTER_SCALE[index]
-  sheet_dir={0:3,1:2,2:0,3:1}.get(direction,direction)
-  src=pygame.Rect((sheet_dir*8+frame%8)*32,index*48,32,48);img=self.party_sheet.subsurface(src)
+  scale=self.party_draw_scale(index,scale)
+  img=self.party_sheet.subsurface(self.party_source_rect(index,direction,frame))
   if scale!=1:img=pygame.transform.scale(img,(int(32*scale),int(48*scale)))
   self.canvas.blit(img,(int(x-img.get_width()/2),int(y-img.get_height())))
+
+ def party_draw_scale(self,index,scale=1):
+  return scale*CHARACTER_SCALE[index]
+
+ def party_source_rect(self,index,direction=0,frame=1):
+  sheet_dir={0:3,1:2,2:0,3:1}.get(direction,direction)
+  return pygame.Rect((sheet_dir*8+frame%8)*32,index*48,32,48)
 
 
  def draw_title(self):
