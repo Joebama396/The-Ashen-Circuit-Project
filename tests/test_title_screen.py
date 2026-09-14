@@ -94,6 +94,15 @@ class TitleScreenTests(unittest.TestCase):
                 self.title.draw(surface)
                 self.assertNotEqual(blank, pygame.image.tostring(surface, 'RGB'))
 
+    def test_supplied_menu_music_starts_and_loops(self):
+        with tempfile.NamedTemporaryFile(suffix='.mp3') as music, \
+                patch('title_screen.pygame.mixer.music.load') as load_mock, \
+                patch('title_screen.pygame.mixer.music.play') as play_mock:
+            title = TitleScreen(music_path=music.name)
+        load_mock.assert_called_with(music.name)
+        play_mock.assert_called_once_with(-1)
+        self.assertTrue(title.music_playing)
+
 
 class GameTitleIntegrationTests(unittest.TestCase):
     def setUp(self):
@@ -124,6 +133,9 @@ class GameTitleIntegrationTests(unittest.TestCase):
                 self.g.event(pygame.event.Event(
                     pygame.KEYDOWN, key=pygame.K_SPACE))
                 self.assertEqual(expected, self.g.app_state)
+
+    def test_game_uses_packaged_menu_theme(self):
+        self.assertEqual('menu_theme.mp3', self.g.title_screen.music_path.name)
 
 
 if __name__ == '__main__':

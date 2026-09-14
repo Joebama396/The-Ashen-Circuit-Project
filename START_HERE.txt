@@ -19,14 +19,16 @@ so it does not need FUSE, Python, administrator access, or an installation.
 
 Starting the AppImage by itself
 -------------------------------
-If you downloaded only the AppImage, open a terminal in its folder and run:
+If you downloaded only the AppImage, mark it as executable in the file
+properties and double-click it. You can also open a terminal in its folder and
+run:
 
    chmod +x ./The_Ashen_Circuit-*-x86_64.AppImage
-   ./The_Ashen_Circuit-*-x86_64.AppImage --appimage-extract-and-run
+   ./The_Ashen_Circuit-*-x86_64.AppImage
 
-Double-clicking the AppImage may fail on newer Ubuntu systems when libfuse.so.2
-is unavailable. The included launcher and the --appimage-extract-and-run option
-avoid that requirement.
+This build includes a static AppImage runtime, so normal launching does not
+require libfuse.so.2. The included launcher and --appimage-extract-and-run remain
+available as fallbacks.
 
 Alternative portable build
 --------------------------

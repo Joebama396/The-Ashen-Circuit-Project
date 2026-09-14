@@ -7,7 +7,7 @@ the final dragon fight.
 
 ## Play on Ubuntu
 
-Download and extract `The_Ashen_Circuit-1.3-Ubuntu.zip`. It already contains the
+Download and extract `The_Ashen_Circuit-1.7-test6-Ubuntu.zip`. It already contains the
 matching AppImage and launcher. Open a terminal in the extracted folder and run:
 
 ```sh
@@ -22,21 +22,20 @@ in your file manager, if that option is available.
 The AppImage can be run directly without FUSE too:
 
 ```sh
-chmod +x ./The_Ashen_Circuit-1.3-x86_64.AppImage
-./The_Ashen_Circuit-1.3-x86_64.AppImage --appimage-extract-and-run
+chmod +x ./The_Ashen_Circuit-1.7-test6-x86_64.AppImage
+./The_Ashen_Circuit-1.7-test6-x86_64.AppImage
 ```
 
-An alternative download, `The_Ashen_Circuit-1.3-Linux-Portable.tar.gz`, contains the
+An alternative download, `The_Ashen_Circuit-1.7-test6-Linux-Portable.tar.gz`, contains the
 same game already unpacked. Extract it, open the `The-Ashen-Circuit` folder, and
 run `AppRun` (or `sh ./AppRun` in a terminal). Keep its files together.
 
-### Why the previous AppImage could fail
+### AppImage compatibility
 
-The previous build's normal startup was reproduced failing with
-`dlopen(): error loading libfuse.so.2` before the game launched. Making it
-executable does not supply this missing library. This is a likely cause of a
-silent double-click failure; your machine's error output is needed to confirm.
-The launcher and portable archive avoid FUSE entirely.
+The AppImage now embeds the static type-2 runtime and can be launched normally
+without `libfuse.so.2`. After marking it executable, double-clicking it works on
+the tested Ubuntu desktop. The launcher and portable archive remain available
+as extraction-based fallbacks.
 
 AppImage's official guide describes
 [the extraction fallback and Ubuntu FUSE package names](https://docs.appimage.org/user-guide/troubleshooting/fuse.html).
@@ -50,8 +49,9 @@ still fails, share `~/.local/state/ashen-circuit/launcher.log` and
 Enemies patrol the dungeon visibly. Touch one and the same room enters combat:
 the party runs to spread-out positions, then the active-time clocks begin. There
 is no separate arena or camera cut. At contact, each party pawn switches from its
-96x96 large exploration array to its native 96x96 layered combat array. Both
-contain raw 64x80 character art without changing its pixel ratio. Every party member has a visible colored
+96x96 exploration cell to its native 96x96 layered combat cell. Battle artwork
+is reduced offline with nearest-neighbor sampling to the same visible height as
+the corresponding overworld sprite. Every party member has a visible colored
 ATB bar in the lower-right panel. A white outline and selection arrow mean that
 character is ready for input. LB/RB switches between ready characters.
 
@@ -90,14 +90,15 @@ contract, with every character aligned to the shared ground anchor.
 Combat idle states use the front, rear, and left/right profiles in
 `party_battle_ready_hd_v1.png`. Attacks swap to
 `party_combat_bodies_hd_v1.png` and `party_combat_arms_hd_v1.png`. Each 96x96
-cell contains the authored 64x80 battle art at its original size plus
+cell contains the authored battle pose reduced to overworld scale plus
 transparent weapon clearance. The body, rear arm, front arm/hand, and weapon
 remain independent source rectangles for attacks. Every character frame is
 blitted 1:1 with no runtime magnification or procedural weapon geometry.
 
 `tools/build_combat_layers.py` is an offline authoring tool. It preserves the
-64x80 battle-source resolution, bakes locked shoulder pivots, angles, offsets,
-hand attachments, and weapon placement into the transparent attack atlases.
+authored source while baking locked shoulder pivots, angles, offsets, hand
+attachments, weapon placement, and the final crisp size reduction into the
+transparent attack atlases.
 `tools/build_authored_stance_atlases.py` packs the approved walk
 and battle-ready sheets. Neither tool runs while packaging or playing the game.
 
@@ -112,22 +113,21 @@ HP, MP, and active-time rows visible while returning ten native pixels to the
 battlefield. Battle messages and the ACTIVE indicator now float in small chips
 over the room rather than occupying a full-width top banner.
 
-The supplied `Battle Theme 1` is the only music track in this build. It begins at
-enemy contact, loops for the duration of combat, and stops immediately when the
-last enemy is defeated. The victory screen is intentionally silent until a
-separate fanfare exists.
+The supplied `Sleep Deprivation` theme loops on the title screens. `Battle Theme
+1` takes over at enemy contact and stops immediately when the last enemy is
+defeated. The victory screen is intentionally silent until a separate fanfare
+exists.
 
 Normal patrols return when you leave and re-enter their rooms. Repair Drones
 always drop a Potion, allowing supply farming. Bosses and treasure do not respawn.
 Enemy strength increases by region to account for permanent character growth.
 
-The former small walk cycles remain as source/reference art, but the runtime now
-uses large temporary overworld frames so future high-detail directional walks
-can be installed without another engine refactor. Exploration and combat share
-one native pixel scale: one character-atlas pixel equals one 640x360 world-canvas
-pixel. Only the finished canvas and the established UI overlay are integer-scaled
-for the 1280x720 window. Enemy art remains a code-drawn baseline. All gameplay
-screenshots are PNGs.
+The former small walk cycles remain as source/reference art, while the runtime
+uses the approved four-direction, four-frame overworld animations. Exploration
+and combat share one native pixel scale: one character-atlas pixel equals one
+640x360 world-canvas pixel. Only the finished canvas and the established UI
+overlay are integer-scaled for the 1280x720 window. Enemy art remains a
+code-drawn baseline. All gameplay screenshots are PNGs.
 
 Dialogue, field prompts, combat messages, commands, HP/MP values, and ATB panels
 now use a high-contrast 5x7 pixel alphabet on an integer-scaled 320x180 UI layer.
@@ -182,6 +182,8 @@ Three relay keys serve five service locks. Unlocks are permanent. The route to
 the relays, command bridge, and dragon remains accessible regardless of how you
 spend them. The workshop is optional and requires opening one of its keyed
 entrances. Gear can also be upgraded at the vault and after the midpoint boss.
+Door arrivals and unlock retreats resolve to nearby walkable floor, and older
+saves written inside doorway machinery are repaired automatically when loaded.
 
 ## Controls
 
@@ -198,7 +200,7 @@ The Bestiary contains the ten enemies used by the game. Encountering an enemy
 unlocks its name, code-rendered sprite, classification, threat level, HP, MP,
 attack, defense, speed, and lore; undiscovered entries remain hidden as `???`.
 Opening the gallery switches to the supplied looping battle track. Leaving it
-stops that track and restores the configured title-menu music hook.
+stops that track and restores the looping `Sleep Deprivation` title-menu track.
 
 Choosing Exit or closing the window enters the same explicit Exit state. Active
 music and sound channels fade before joystick and mixer resources are released;
@@ -221,8 +223,8 @@ enemies, A/Z confirms, and B/X cancels. Menus pause exploration and patrols.
 
 ## Files and saves
 
-The AppImage contains code, Python, libraries, the supplied battle theme, and
-sprite data.
+The AppImage contains code, Python, libraries, the supplied `Sleep Deprivation`
+menu theme and battle theme, and sprite data.
 It writes these files in your home folder:
 
 - `~/.local/share/ashen-circuit/save.json`: Slot 1 progress, learned tomes,

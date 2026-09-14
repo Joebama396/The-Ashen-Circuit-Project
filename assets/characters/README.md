@@ -28,13 +28,15 @@ or limb from leaking into an adjacent animation frame.
 - Rian's shoulder-length frost-white/ice-blue hair gives her a distinct silhouette from Marek
 - Every character is isolated before packing, so no weapon, cape, or limb crosses into a neighboring cell
 
-This is the authored source for the runtime combat layer atlases. It is processed
-offline and is not resized by the running game.
+This is the authored source for the runtime combat layer atlases. It is reduced
+offline with nearest-neighbour sampling to match each hero's overworld height;
+it is never resized by the running game.
 
 ## `party_combat_bodies_hd_v1.png` and `party_combat_arms_hd_v1.png`
 
 - Runtime frame: 96×96 transparent pixels
-- Authored character inside each frame: unchanged 64×80 source pixels
+- Authored character inside each frame: battle silhouette reduced to its
+  corresponding overworld height
 - Body atlas: four fixed torso/body frames
 - Part atlas: separate rear-arm, front-arm/hand, and weapon rows, with one
   column per named state
@@ -42,9 +44,9 @@ offline and is not resized by the running game.
 - Rendering: direct 1:1 source-rectangle blits only
 
 `tools/build_combat_layers.py` regenerates both atlases from the authored battle
-sheet using the locked blueprints in `combat_poses.py`. It never synthesizes or
-underpaints body pixels: every retained body pixel is copied byte-for-byte from
-the source silhouette. The packaged runtime never slices or masks.
+sheet using the locked blueprints in `combat_poses.py`. Before the intentional
+final nearest-neighbour reduction, it never synthesizes or underpaints body
+pixels. The packaged runtime never slices, masks, or scales the result.
 
 Brann's face/head cluster is permanently excluded from every movable part
 slice, so horizontal mirroring cannot hand those pixels to the launcher layer.
@@ -71,7 +73,8 @@ strips from `stances/` without resizing any authored pixels.
 
 These complete directional sprites are used for battle-ready idle states. The
 decoupled combat body/arm atlases remain active for attacks, recoil, and jump
-sequences.
+sequences. Both sets are baked at the same character scale as the corresponding
+overworld sprites.
 
 ## `party_battle_reference_v5.png`
 

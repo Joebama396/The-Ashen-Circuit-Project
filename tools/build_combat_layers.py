@@ -1,9 +1,10 @@
 """Bake locked combat poses into native-resolution transparent PNG atlases.
 
 This is an asset-authoring tool, not runtime rendering. It may rotate source
-arm pixels into the approved pose blueprints, but it never resizes the 64x80
-source artwork. The resulting 96x96 frames are checked in and always blitted
-1:1 by the game.
+arm pixels into the approved pose blueprints, then reduces every completed
+layer with nearest-neighbour sampling to the matching overworld silhouette
+height. The resulting 96x96 frames are checked in and always blitted 1:1 by
+the game.
 """
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ from combat_poses import (ARM_LAYERS, ARM_SLICES, BODY_CELL_OFFSET,
     COMBAT_CELL_H, COMBAT_CELL_W, COMBAT_GROUND_ANCHOR, HERO_POSES,
     POSE_BLUEPRINTS, SOURCE_ARM_ANCHOR, SOURCE_ARM_CELL_H,
     SOURCE_ARM_CELL_W, SOURCE_ARM_OFFSET, SOURCE_CELL_H, SOURCE_CELL_W)
+from render_config import BATTLE_SPRITE_SCALE_RATIOS
 
 
 BODY_OUTPUT=ROOT/'assets/characters/party_combat_bodies_hd_v1.png'
@@ -129,6 +131,20 @@ def _place_native(source,source_anchor):
     return cell
 
 
+def _shrink_actor_cell(cell,hero):
+    """Scale a complete layer around the shared feet anchor, offline only."""
+    numerator,denominator=BATTLE_SPRITE_SCALE_RATIOS[hero]
+    width=(cell.get_width()*numerator+denominator//2)//denominator
+    height=(cell.get_height()*numerator+denominator//2)//denominator
+    scaled=pygame.transform.scale(cell,(width,height))
+    anchor_x=(COMBAT_GROUND_ANCHOR[0]*numerator+denominator//2)//denominator
+    anchor_y=(COMBAT_GROUND_ANCHOR[1]*numerator+denominator//2)//denominator
+    result=pygame.Surface((COMBAT_CELL_W,COMBAT_CELL_H),pygame.SRCALPHA)
+    result.blit(scaled,(COMBAT_GROUND_ANCHOR[0]-anchor_x,
+                        COMBAT_GROUND_ANCHOR[1]-anchor_y))
+    return result
+
+
 def generate_atlases(root=ROOT):
     source=pygame.image.load(str(root/'assets/characters/party_battle_v6.png')).convert_alpha()
     bodies=pygame.Surface((4*COMBAT_CELL_W,COMBAT_CELL_H),pygame.SRCALPHA)
@@ -137,14 +153,16 @@ def generate_atlases(root=ROOT):
                          len(HERO_POSES)*len(ARM_LAYERS)*COMBAT_CELL_H),
                         pygame.SRCALPHA)
     for hero,states in HERO_POSES.items():
-        body=_place_native(_raw_body(source,hero),(SOURCE_CELL_W//2,SOURCE_CELL_H-2))
+        body=_shrink_actor_cell(
+            _place_native(_raw_body(source,hero),(SOURCE_CELL_W//2,SOURCE_CELL_H-2)),
+            hero)
         bodies.blit(body,(hero*COMBAT_CELL_W,0))
         source_layers={layer:_slice_arm(source,hero,layer) for layer in ARM_LAYERS}
         for column,state in enumerate(states):
             for layer in ARM_LAYERS:
                 raw=_rotate_at(source_layers[layer],ARM_SLICES[hero][layer].pivot,
                                POSE_BLUEPRINTS[hero][state][layer])
-                cell=_place_native(raw,SOURCE_ARM_ANCHOR)
+                cell=_shrink_actor_cell(_place_native(raw,SOURCE_ARM_ANCHOR),hero)
                 row=hero*len(ARM_LAYERS)+ARM_LAYERS.index(layer)
                 arms.blit(cell,(column*COMBAT_CELL_W,row*COMBAT_CELL_H))
     return bodies,arms

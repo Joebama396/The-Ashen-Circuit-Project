@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-VERSION="${ASHEN_VERSION:-1.3}"
+VERSION="${ASHEN_VERSION:-1.7-test6}"
 export PYTHONPATH="$ROOT/vendor${PYTHONPATH:+:$PYTHONPATH}"
 cd "$ROOT"
 mkdir -p build dist AppDir
@@ -13,6 +13,7 @@ python3 -m PyInstaller --noconfirm --clean --onefile --windowed --name ashen-cir
   --add-data "assets/characters/party_combat_bodies_hd_v1.png:assets/characters" \
   --add-data "assets/characters/party_combat_arms_hd_v1.png:assets/characters" \
   --add-data "assets/audio/battle_theme_1.mp3:assets/audio" \
+  --add-data "assets/audio/menu_theme.mp3:assets/audio" \
   game.py
 mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
 cp dist/ashen-circuit AppDir/usr/bin/ashen-circuit
@@ -25,7 +26,13 @@ if [[ ! -x "$ROOT/appimagetool-x86_64.AppImage" ]]; then
   echo "Missing appimagetool-x86_64.AppImage in project root" >&2
   exit 1
 fi
-ARCH=x86_64 "$ROOT/appimagetool-x86_64.AppImage" --appimage-extract-and-run AppDir "dist/The_Ashen_Circuit-${VERSION}-x86_64.AppImage"
+runtime_args=()
+runtime_file="${APPIMAGE_RUNTIME:-$ROOT/runtime-static-x86_64}"
+if [[ -f "$runtime_file" ]]; then
+  runtime_args=(--runtime-file "$runtime_file")
+fi
+ARCH=x86_64 "$ROOT/appimagetool-x86_64.AppImage" --appimage-extract-and-run \
+  "${runtime_args[@]}" AppDir "dist/The_Ashen_Circuit-${VERSION}-x86_64.AppImage"
 chmod +x "dist/The_Ashen_Circuit-${VERSION}-x86_64.AppImage"
 cp Play-The-Ashen-Circuit.sh dist/Play-The-Ashen-Circuit.sh
 cp START_HERE.txt dist/START_HERE.txt

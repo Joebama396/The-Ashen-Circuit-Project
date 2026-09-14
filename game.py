@@ -11,7 +11,8 @@ from options_menu import OptionsMenu
 from progression import (ProgressionMixin, ARTS, LINKS_TECH, COSTS, CONSUMABLES,
                          ALL_TOMES, STATS, make_treasure)
 from render_config import (ACTOR_CELL_H, ACTOR_CELL_W, ACTOR_GROUND_ANCHOR,
-                           DISPLAY_SCALE, UI_H, UI_W, VIEW_H, VIEW_W, WORLD_GRID)
+                           DISPLAY_SCALE, UI_H, UI_W, VIEW_H, VIEW_W,
+                           WALK_BOUNDS, WORLD_GRID)
 from save_menu import SaveMenu
 from title_screen import (BESTIARY, EXIT, GAMEPLAY, OPTIONS, SAVE_MENU, TITLE,
                           TitleScreen)
@@ -180,8 +181,7 @@ class Game(ProgressionMixin):
    get_battle_mode=lambda:self.battle_mode,
    toggle_battle_mode=self.toggle_title_battle_mode,
    on_exit=self.exit_application,
-   # Drop a licensed track at this path to enable the menu-music hooks.
-   music_path=resource_path('assets/audio/menu_theme.ogg'))
+   music_path=resource_path('assets/audio/menu_theme.mp3'))
 
  def connect_controller(self,index=0):
   try:
@@ -869,6 +869,29 @@ class Game(ProgressionMixin):
 
 def smoke_test(g):
  # Exercise the packaged modules and sprite asset without touching a save.
+ original_transition=g.transition;reached=[]
+ try:
+  g.transition=lambda destination:reached.append(destination)
+  g.state='field';g.room='gate';g.px,g.py=320,WALK_BOUNDS[2]+32
+  g.world.arrive()
+  for _ in range(16):
+   if reached:break
+   g.move(0,-4)
+  assert reached==['intake'], 'Walking into a north door did not trigger transition'
+ finally:g.transition=original_transition
+ original_save_method=g.save
+ try:
+  g.save=lambda:None
+  g.state='field';g.room='brig';g.keys=1;g.open_locks=set();g.world.arrive()
+  g.px,g.py=dict(g.world.exits())['pumps']
+  g.move(0,0)
+  pumps_edge=tuple(sorted(('brig','pumps')))
+  assert pumps_edge in g.open_locks, 'Flooded Pumps shortcut did not unlock'
+  assert g.world.walkable((g.px,g.py)), 'Shortcut unlock retreat landed in machinery'
+  g.state='field';g.transition('pumps')
+  assert g.room=='pumps', 'Unlocked Flooded Pumps shortcut did not transition'
+  assert g.world.walkable((g.px,g.py)), 'Flooded Pumps arrival landed in machinery'
+ finally:g.save=original_save_method
  g.state='field';g.room='foundry';g.world.arrive()
  enemy=g.world.patrols[0].pawns[0]
  g.px,g.py=enemy.pos;g.world.grace=0;g.world.update(1/60)
@@ -921,7 +944,7 @@ def smoke_test(g):
    g.load();assert g.party[0].pow==old+1, 'Permanent growth did not survive loading'
    g.state='bag';g.draw()
   finally:SAVE=original_save
- print('SMOKE OK: battle stances, active time, supplied music lifecycle, motion sprites, readable HUD, tomes, Xbox menus, saves')
+ print('SMOKE OK: doors, safe shortcuts, battle stances, active time, supplied music lifecycle, motion sprites, readable HUD, tomes, Xbox menus, saves')
  pygame.quit()
 
 if __name__=='__main__':

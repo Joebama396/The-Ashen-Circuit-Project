@@ -2,6 +2,7 @@ import json
 import itertools
 import inspect
 import os
+from collections import deque
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ import combat_poses
 import render_config
 from tools.build_authored_stance_atlases import (build_battle_atlas,
                                                   build_walk_atlas)
-from tools.build_combat_layers import generate_atlases
+from tools.build_combat_layers import _raw_body, generate_atlases
 
 
 class SeamlessTests(unittest.TestCase):
@@ -40,6 +41,17 @@ class SeamlessTests(unittest.TestCase):
         g.room=room;g.state='field';g.px,g.py=210,264
         g.world.arrive()
         return g
+
+    def has_walkable_path(self,g,start,goal=(320,180),step=4):
+        """Flood-fill the continuous floor at movement-sized intervals."""
+        start=tuple(map(round,start));frontier=deque([start]);seen={start}
+        while frontier:
+            x,y=frontier.popleft()
+            if (x-goal[0])**2+(y-goal[1])**2<=step**2*2:return True
+            for point in ((x-step,y),(x+step,y),(x,y-step),(x,y+step)):
+                if point not in seen and g.world.walkable(point):
+                    seen.add(point);frontier.append(point)
+        return False
 
     def settle(self, max_frames=900):
         for _ in range(max_frames):
@@ -313,28 +325,23 @@ class SeamlessTests(unittest.TestCase):
         self.assertGreater(pygame.mask.from_surface(
             arm_cell(3,'low_ready','rear')).count(),0)
 
-    def test_body_atlas_never_contains_synthetic_or_resized_pixels(self):
+    def test_raw_body_never_contains_synthetic_pixels_before_offline_shrink(self):
         source=pygame.image.load(str(game.resource_path(
             'assets/characters/party_battle_v6.png'))).convert_alpha()
-        ox,oy=combat_poses.BODY_CELL_OFFSET
         for hero in range(4):
             authored=source.subsurface(pygame.Rect(hero*64,0,64,80))
-            body=self.g.combat_body_sheet.subsurface(
-                combat_poses.body_source_rect(hero))
+            body=_raw_body(source,hero)
             for y in range(body.get_height()):
                 for x in range(body.get_width()):
                     color=body.get_at((x,y))
                     if not color.a:continue
-                    self.assertTrue(ox<=x<ox+64 and oy<=y<oy+80)
-                    self.assertEqual(authored.get_at((x-ox,y-oy)),color)
+                    self.assertEqual(authored.get_at((x,y)),color)
 
     def test_brann_face_cluster_never_enters_a_movable_part_slice(self):
         source=pygame.image.load(str(game.resource_path(
             'assets/characters/party_battle_v6.png'))).convert_alpha()
         authored=source.subsurface(pygame.Rect(3*64,0,64,80))
-        body=self.g.combat_body_sheet.subsurface(
-            combat_poses.body_source_rect(3))
-        ox,oy=combat_poses.BODY_CELL_OFFSET
+        body=_raw_body(source,3)
         face=pygame.Rect(32,4,12,16)
         retained=0
         for y in range(face.top,face.bottom):
@@ -342,7 +349,7 @@ class SeamlessTests(unittest.TestCase):
                 color=authored.get_at((x,y))
                 if not color.a:continue
                 retained+=1
-                self.assertEqual(color,body.get_at((x+ox,y+oy)))
+                self.assertEqual(color,body.get_at((x,y)))
         self.assertGreater(retained,180)
 
     def test_merek_high_ready_uses_three_quarter_shoulder_anchors(self):
@@ -354,13 +361,11 @@ class SeamlessTests(unittest.TestCase):
         source=pygame.image.load(str(game.resource_path(
             'assets/characters/party_battle_v6.png'))).convert_alpha()
         authored=source.subsurface(pygame.Rect(64,0,64,80))
-        body=self.g.combat_body_sheet.subsurface(
-            combat_poses.body_source_rect(1))
-        ox,oy=combat_poses.BODY_CELL_OFFSET
+        body=_raw_body(source,1)
         for y in range(7,19):
             for x in range(26,36):
                 color=authored.get_at((x,y))
-                if color.a:self.assertEqual(color,body.get_at((x+ox,y+oy)))
+                if color.a:self.assertEqual(color,body.get_at((x,y)))
 
     def test_all_melee_states_reuse_the_unchanged_base_body(self):
         g=self.battle()
@@ -427,11 +432,36 @@ class SeamlessTests(unittest.TestCase):
         for hero in range(4):
             authored=source.subsurface(pygame.Rect(hero*64,0,64,80))
             self.assertGreaterEqual(authored.get_bounding_rect().height,60)
-            body=self.g.combat_body_sheet.subsurface(
-                combat_poses.body_source_rect(hero))
-            self.assertGreaterEqual(body.get_bounding_rect().height,60)
         self.assertEqual((32*96,4*96),self.g.party_sheet.get_size())
         self.assertEqual((4*96,4*96),self.g.battle_ready_sheet.get_size())
+
+    def test_battle_art_is_baked_to_each_heroes_overworld_height(self):
+        for hero in range(4):
+            walk_heights=[]
+            for direction in range(4):
+                for frame in range(8):
+                    cell=self.g.party_sheet.subsurface(
+                        self.g.party_source_rect(hero,direction,frame))
+                    walk_heights.append(cell.get_bounding_rect().height)
+            target=max(walk_heights)
+
+            for direction in range(4):
+                ready=self.g.battle_ready_sheet.subsurface(
+                    self.g.battle_ready_source_rect(hero,direction))
+                self.assertLessEqual(abs(ready.get_bounding_rect().height-target),3)
+
+            body=self.g.combat_body_sheet.subsurface(
+                combat_poses.body_source_rect(hero))
+            self.assertLessEqual(abs(body.get_bounding_rect().height-target),2)
+
+            profile=combat_poses.HERO_COMBAT_PROFILES[hero]
+            composed=pygame.Surface((96,96),pygame.SRCALPHA)
+            self.g.world.combat_rig.draw(
+                composed,hero,profile.idle_state,
+                *combat_poses.COMBAT_GROUND_ANCHOR,False)
+            # A raised sword, pistol, or launcher may extend slightly above the
+            # body, but the underlying character is now at overworld scale.
+            self.assertLessEqual(composed.get_bounding_rect().height,target+4)
 
     def test_authored_overworld_exposes_every_direction_and_frame(self):
         for hero in range(4):
@@ -442,6 +472,24 @@ class SeamlessTests(unittest.TestCase):
                     self.assertTrue(self.g.party_sheet.get_rect().contains(rect))
                     self.assertGreater(pygame.mask.from_surface(
                         self.g.party_sheet.subsurface(rect)).count(),0)
+
+    def test_rian_profile_directions_match_the_authored_left_facing_strip(self):
+        from PIL import Image, ImageOps
+        from tools.build_authored_stance_atlases import place_on_actor_cell
+
+        authored = Image.open(game.resource_path(
+            'assets/characters/stances/rian_walk_right.png')).convert('RGBA')
+        authored_left = place_on_actor_cell(authored.crop((0, 0, 64, 64)))
+        authored_right = place_on_actor_cell(ImageOps.mirror(
+            authored.crop((0, 0, 64, 64))))
+        runtime_left = self.g.party_sheet.subsurface(
+            self.g.party_source_rect(0, 3, 0))
+        runtime_right = self.g.party_sheet.subsurface(
+            self.g.party_source_rect(0, 1, 0))
+        self.assertEqual(authored_left.tobytes(),
+                         pygame.image.tostring(runtime_left, 'RGBA'))
+        self.assertEqual(authored_right.tobytes(),
+                         pygame.image.tostring(runtime_right, 'RGBA'))
 
     def test_battle_ready_atlas_exposes_every_direction(self):
         for hero in range(4):
@@ -464,12 +512,14 @@ class SeamlessTests(unittest.TestCase):
             self.assertEqual(0,round(pawn.goal[0])%(render_config.WORLD_GRID//2))
             self.assertEqual(0,round(pawn.goal[1])%render_config.WORLD_GRID)
 
-    def test_offline_atlas_builder_never_resizes_source_character_art(self):
-        for module in ('tools.build_combat_layers',
-                       'tools.build_authored_stance_atlases'):
-            source=inspect.getsource(__import__(module,fromlist=['*']))
-            self.assertNotIn('transform.scale',source)
-            self.assertNotIn('smoothscale',source)
+    def test_offline_atlas_builder_uses_only_crisp_nearest_neighbor_shrink(self):
+        combat=inspect.getsource(__import__(
+            'tools.build_combat_layers',fromlist=['*']))
+        authored=inspect.getsource(__import__(
+            'tools.build_authored_stance_atlases',fromlist=['*']))
+        self.assertIn('pygame.transform.scale',combat)
+        self.assertIn('Image.Resampling.NEAREST',authored)
+        self.assertNotIn('smoothscale',combat+authored)
 
     def test_battle_track_starts_on_contact_and_stops_on_final_enemy(self):
         g=self.field();g.music_ready=True
@@ -669,6 +719,58 @@ class SeamlessTests(unittest.TestCase):
                     g.px,g.py=p
                     g.move(0,0)
                     self.assertEqual(destination,g.room)
+
+    def test_every_door_trigger_is_walkable_and_north_door_activates_by_motion(self):
+        for room in game.LINKS:
+            with self.subTest(room=room):
+                g=self.field(room)
+                for _,point in g.world.exits():
+                    self.assertTrue(g.world.walkable(point),
+                                    f'{room} door trigger {point} is outside walk bounds')
+                    self.assertTrue(self.has_walkable_path(g,point),
+                                    f'{room} door trigger {point} is cut off from the room')
+
+        g=self.field('gate')
+        g.flags.update(('relay_a','relay_b','relay_c','vael_down'))
+        g.open_locks=set(game.LOCKS)
+        g.px,g.py=320,render_config.WALK_BOUNDS[2]+32
+        for _ in range(16):
+            if g.room!='gate':break
+            g.move(0,-4)
+        self.assertEqual('intake',g.room)
+
+    def test_every_arrival_and_locked_door_retreat_rejoins_the_room(self):
+        requirements=('relay_a','relay_b','relay_c','vael_down')
+        for room,links in game.LINKS.items():
+            for destination in links:
+                with self.subTest(arrival=f'{room}->{destination}'):
+                    g=self.field(room)
+                    g.flags.update(requirements);g.open_locks=set(game.LOCKS)
+                    g.transition(destination)
+                    self.assertEqual(destination,g.room)
+                    self.assertTrue(g.world.walkable((g.px,g.py)))
+                    self.assertTrue(self.has_walkable_path(g,(g.px,g.py)),
+                                    f'{room}->{destination} arrival cannot reach room interior')
+
+        for edge in game.LOCKS:
+            for room,destination in (edge,tuple(reversed(edge))):
+                with self.subTest(locked_retreat=f'{room}->{destination}'):
+                    g=self.field(room);g.open_locks=set();g.keys=1
+                    g.px,g.py=dict(g.world.exits())[destination]
+                    g.move(0,0)
+                    self.assertIn(edge,g.open_locks)
+                    self.assertEqual(room,g.room)
+                    self.assertTrue(g.world.walkable((g.px,g.py)))
+                    self.assertTrue(self.has_walkable_path(g,(g.px,g.py)),
+                                    f'{room}->{destination} unlock retreat is trapped')
+
+    def test_arrive_repairs_coordinates_saved_inside_door_machinery(self):
+        g=self.field('brig')
+        g.px,g.py=586,191  # Coordinate written by the old pumps unlock retreat.
+        self.assertFalse(g.world.walkable((g.px,g.py)))
+        g.world.arrive()
+        self.assertTrue(g.world.walkable((g.px,g.py)))
+        self.assertTrue(self.has_walkable_path(g,(g.px,g.py)))
 
     def test_locked_shortcut_consumes_one_key_only(self):
         g=self.field('barracks');g.keys=2

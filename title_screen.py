@@ -70,7 +70,7 @@ class TitleScreen:
         rng = random.Random(0xA5E1)
         self.stars = [(rng.randrange(320), rng.randrange(180),
                        rng.choice((1, 1, 1, 2))) for _ in range(76)]
-        self.initialize_music()
+        self.play_music()
 
     def _set_legacy_battle_mode(self, mode):
         if mode != self.get_battle_mode():
@@ -89,7 +89,7 @@ class TitleScreen:
     # pygame.mixer.music is a single global stream. Each play hook reloads the
     # requested track so battle and menu music can safely share that stream.
     def initialize_music(self, music_path=None):
-        """Prepare the optional menu track; missing placeholder files are safe."""
+        """Prepare the menu track; missing files remain safe for development."""
         if music_path is not None:
             self.music_path = Path(music_path)
         if self.music_path is None or not self.music_path.exists():
@@ -104,7 +104,7 @@ class TitleScreen:
         return self.music_ready
 
     def play_music(self):
-        """Load and loop menu music. This is a no-op until a track is supplied."""
+        """Load and loop the menu music."""
         if not self.music_ready and not self.initialize_music():
             return False
         try:

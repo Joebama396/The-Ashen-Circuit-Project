@@ -2,14 +2,20 @@
 """Pack the approved directional walk and battle-ready sprites for runtime use.
 
 The source sheets remain untouched. Runtime cells are 96x96 and are positioned
-on the shared (48, 88) ground anchor without resizing any authored pixels.
+on the shared (48, 88) ground anchor. Battle art is reduced offline with
+nearest-neighbour sampling to match each hero's visible overworld height;
+runtime rendering never scales it.
 """
 from pathlib import Path
+import sys
 
 from PIL import Image, ImageOps
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from render_config import BATTLE_SPRITE_SCALE_RATIOS
+
 STANCES = ROOT / "assets/characters/stances"
 CHARACTERS = ("rian", "merek", "tess", "brann")
 DIRECTIONS = ("down", "left", "right", "up")
@@ -47,6 +53,21 @@ def place_on_actor_cell(source):
     return target
 
 
+def shrink_actor_cell(cell, hero):
+    """Bake one battle cell to the hero's overworld silhouette scale."""
+    numerator, denominator = BATTLE_SPRITE_SCALE_RATIOS[hero]
+    width = (cell.width * numerator + denominator // 2) // denominator
+    height = (cell.height * numerator + denominator // 2) // denominator
+    scaled = cell.resize((width, height), Image.Resampling.NEAREST)
+    anchor_x = (ACTOR_CELL[0] // 2 * numerator + denominator // 2) // denominator
+    anchor_y = (GROUND_Y * numerator + denominator // 2) // denominator
+    result = Image.new("RGBA", ACTOR_CELL, (0, 0, 0, 0))
+    result.alpha_composite(
+        scaled, (ACTOR_CELL[0] // 2 - anchor_x, GROUND_Y - anchor_y)
+    )
+    return result
+
+
 def walk_frames(character):
     strips = {
         direction: load_rgba(
@@ -60,7 +81,16 @@ def walk_frames(character):
             strip.crop((frame * 64, 0, (frame + 1) * 64, 64))
             for frame in range(4)
         ]
-    frames["left"] = [ImageOps.mirror(frame) for frame in frames["right"]]
+    # Rian's approved profile strip was authored facing left despite retaining
+    # the historical ``rian_walk_right.png`` filename.  Treat that strip as
+    # left-facing and derive his right-facing frames from it.  The other three
+    # source strips are correctly right-facing.
+    if character == "rian":
+        left_frames = frames.pop("right")
+        frames["left"] = left_frames
+        frames["right"] = [ImageOps.mirror(frame) for frame in left_frames]
+    else:
+        frames["left"] = [ImageOps.mirror(frame) for frame in frames["right"]]
     return frames
 
 
@@ -91,7 +121,7 @@ def build_battle_atlas():
     for hero, character in enumerate(CHARACTERS):
         source = battle_frames(character)
         for direction_index, direction in enumerate(DIRECTIONS):
-            cell = place_on_actor_cell(source[direction])
+            cell = shrink_actor_cell(place_on_actor_cell(source[direction]), hero)
             atlas.alpha_composite(
                 cell, (direction_index * ACTOR_CELL[0], hero * ACTOR_CELL[1])
             )

@@ -2,7 +2,8 @@
 
 These PNGs are the lossless authored sources for the current party animation
 and battle-ready atlases. `tools/build_authored_stance_atlases.py` packs them
-into native 96x96 runtime cells without resizing their pixels.
+into native 96x96 runtime cells. Walk art remains unchanged; battle art is
+reduced offline with nearest-neighbour sampling to its matching overworld size.
 
 ## Walk sheets
 

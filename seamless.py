@@ -210,11 +210,36 @@ class WorldCombat:
             for r in self.blockers())
 
     def clamp_point(self, p):
+        """Return the nearest walkable point, preferring the room interior.
+
+        A simple x-only fallback could leave side-door arrivals inside the
+        collision base of the large doorway machinery. Search outward from the
+        requested point instead so door retreats, arrivals, party trails, and
+        combat destinations always land on usable floor.
+        """
         left,right,top,bottom=WALK_BOUNDS
-        x,y=max(left,min(right,p[0])),max(top,min(bottom,p[1]))
-        if not self.walkable((x,y)):
-            x=WORLD_GRID+HALF_GRID if x<VIEW_W//2 else VIEW_W-WORLD_GRID-HALF_GRID
-        return x,y
+        x=round(max(left,min(right,p[0])))
+        y=round(max(top,min(bottom,p[1])))
+        if self.walkable((x,y)):return x,y
+        center=(VIEW_W//2,VIEW_H//2)
+        for radius in range(1,WORLD_GRID+1):
+            ring=[]
+            for offset in range(-radius,radius+1):
+                ring.extend(((x+offset,y-radius),(x+offset,y+radius),
+                             (x-radius,y+offset),(x+radius,y+offset)))
+            ring.sort(key=lambda point:distance(point,center))
+            for candidate in ring:
+                if self.walkable(candidate):return candidate
+        if self.walkable(center):return center
+        raise RuntimeError(f'No walkable point near {p}')
+
+    def door_interior_point(self,door,distance_in):
+        """Find a safe position just inside a doorway."""
+        center=(VIEW_W//2,VIEW_H//2)
+        length=distance(door,center) or 1
+        desired=(door[0]+(center[0]-door[0])*distance_in/length,
+                 door[1]+(center[1]-door[1])*distance_in/length)
+        return self.clamp_point(desired)
 
     def arrive(self, previous=None, repopulate=False):
         g=self.g
@@ -232,10 +257,13 @@ class WorldCombat:
         if previous is not None:
             center=(VIEW_W//2,VIEW_H//2)
             door=next((p for dest,p in self.exits() if dest==previous),(320,288))
-            length=distance(door,center) or 1
-            g.px,g.py=self.clamp_point((door[0]+(center[0]-door[0])*38/length,
-                                        door[1]+(center[1]-door[1])*38/length))
+            g.px,g.py=self.door_interior_point(door,38)
             g.facing=facing(door,center)
+        else:
+            # Loading an older save may restore coordinates written by the
+            # former side-door retreat bug. Repair them before the party is
+            # rebuilt so an affected save recovers automatically.
+            g.px,g.py=self.clamp_point((g.px,g.py))
         # Preserve the familiar four-person trail, but keep everyone on-screen.
         self.heroes=[]
         trail_x=-1 if g.px>=130 else 1
@@ -294,11 +322,7 @@ class WorldCombat:
         for dest,p in self.exits():
             if distance((g.px,g.py),p)<14:
                 # Retreat from a blocked/locked doorway before showing dialogue.
-                center=(VIEW_W//2,VIEW_H//2)
-                norm=distance(p,center) or 1
-                retreat=(p[0]+(center[0]-p[0])*22/norm,
-                         p[1]+(center[1]-p[1])*22/norm)
-                g.px,g.py=retreat
+                g.px,g.py=self.door_interior_point(p,22)
                 g.transition(dest)
                 return
 

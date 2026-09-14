@@ -21,6 +21,12 @@ SOURCE_CHARACTER_W=64
 SOURCE_CHARACTER_H=80
 SOURCE_IN_ACTOR_CELL=(16,10)
 
+# Offline-only nearest-neighbour shrink ratios for battle artwork. Each ratio
+# maps the tallest authored battle silhouette to the tallest visible overworld
+# silhouette for that hero (Rian, Merek, Tess, Brann). The generated atlases
+# keep their 96x96 cells and the runtime still blits every pixel at 1:1.
+BATTLE_SPRITE_SCALE_RATIOS=((47,71),(46,78),(47,65),(47,78))
+
 # Grid-derived feet anchors shared by patrol placement and combat formation.
 GRID_X=tuple(range(HALF_GRID,VIEW_W, WORLD_GRID))
 GRID_Y=(WORLD_GRID*2,WORLD_GRID*3,WORLD_GRID*4)
@@ -29,5 +35,8 @@ GRID_Y=(WORLD_GRID*2,WORLD_GRID*3,WORLD_GRID*4)
 FORMATION_X=tuple(range(HALF_GRID,VIEW_W,HALF_GRID))
 FORMATION_Y=GRID_Y
 
-# A full 64x80 character remains inside the room at every valid foot point.
-WALK_BOUNDS=(HALF_GRID,VIEW_W-HALF_GRID,WORLD_GRID*2-16,VIEW_H-HALF_GRID)
+# The top door's foot trigger is the third half-grid line (y=96).  Keeping the
+# walking boundary on that line lets the party actually enter north exits while
+# the 96x96 actor cell and its visible authored pixels remain on-screen.
+WALK_BOUNDS=(HALF_GRID,VIEW_W-HALF_GRID,WORLD_GRID+HALF_GRID,
+             VIEW_H-HALF_GRID)
