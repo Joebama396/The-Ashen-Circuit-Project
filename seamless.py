@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 import itertools
 import math
 import pygame
-from battle_animations import BATTLE_CLIPS, BattleAnimationAtlas
+from battle_animations import (BATTLE_CLIPS, BattleAnimationAtlas,
+                               scaled_directional_frame)
 from combat_poses import (HERO_COMBAT_PROFILES, RIAN_PROFILE, MAREK_PROFILE,
                           TESS_PROFILE, BRANN_PROFILE, CombatSpriteRig)
 from pixel_ui import label, panel
@@ -1103,9 +1104,13 @@ class WorldCombat:
                         p.animation_clip in BATTLE_CLIPS)
             directional=self._directional_frame(p) if combat_rig else None
             if directional is not None:
-                sheet, local_frame=directional
-                src=sheet.subsurface(pygame.Rect(local_frame*64,0,64,64))
-                s.blit(src,(round(x-32),round(y-64)))
+                sheet, local_frame, sheet_key=directional
+                src=scaled_directional_frame(sheet,local_frame,sheet_key)
+                # Anchor the expanded transparent frame at the same ground
+                # point.  Weapon and coat pixels can extend beyond the old cell
+                # without being clipped or shifting Rian's feet.
+                s.blit(src,(round(x-src.get_width()/2),
+                            round(y-src.get_height())))
             elif full_frame:
                 self.battle_animation_atlas.draw(
                     s,p.animation_frame,x,y,p.direction==1)
@@ -1144,18 +1149,16 @@ class WorldCombat:
             return None
         prefix={'sword_basic':'sword_basic_','battle_idle':'battle_idle_',
                 'hurt':'hurt_','defeated':'defeated_'}.get(p.animation_clip,'')
-        if p.direction==0:
-            sheet=self.battle_directional_sheets.get(prefix+'back_up')
-        elif p.direction==2:
-            sheet=self.battle_directional_sheets.get(prefix+'front_down')
-        else:
-            sheet=self.battle_directional_sheets.get(prefix+'profile_right')
+        direction=('back_up' if p.direction==0 else
+                   'front_down' if p.direction==2 else 'profile_right')
+        sheet_key=prefix+direction
+        sheet=self.battle_directional_sheets.get(sheet_key)
         if sheet is None:return None
         clip=BATTLE_CLIPS[p.animation_clip]
         # Stationary battle idle is deliberately a held guard pose.  Motion is
         # reserved for battle_dash, whose four frames supply the guarded walk.
         local_frame=0 if p.animation_clip in ('battle_idle','defeated') else p.animation_frame-clip.start
-        return sheet,local_frame
+        return sheet,local_frame,sheet_key
 
     def draw_scene(self, hud=True):
         self.draw_ground()

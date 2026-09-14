@@ -43,6 +43,33 @@ class BattleAnimationTests(unittest.TestCase):
         self.assertGreater(clips['hurt'].priority, clips['sword_skill'].priority)
         self.assertGreater(clips['defeated'].priority, clips['hurt'].priority)
 
+    def test_undersized_directional_strips_match_party_reference_scale(self):
+        corrected = {
+            'profile_right',
+            'sword_basic_front_down',
+            'sword_basic_back_up',
+            'sword_basic_profile_right',
+        }
+        self.assertEqual(corrected,
+                         set(battle_animations.RIAN_UNDERSIZED_DIRECTIONAL_KEYS))
+        for key in corrected:
+            with self.subTest(key=key):
+                self.assertEqual(1.8,battle_animations.rian_directional_scale(key))
+        self.assertEqual(1.0,battle_animations.rian_directional_scale('front_down'))
+        self.assertEqual(1.0,battle_animations.rian_directional_scale('hurt_profile_right'))
+
+        try:
+            import pygame
+        except ImportError:
+            self.skipTest('pygame is not installed in this test environment')
+        sheet=pygame.Surface((256,64),pygame.SRCALPHA)
+        corrected_frame=battle_animations.scaled_directional_frame(
+            sheet,0,'sword_basic_front_down')
+        normal_frame=battle_animations.scaled_directional_frame(
+            sheet,0,'front_down')
+        self.assertEqual((115,115),corrected_frame.get_size())
+        self.assertEqual((64,64),normal_frame.get_size())
+
     def test_builder_pads_cells_without_scaling_and_removes_magenta(self):
         with tempfile.TemporaryDirectory(prefix='ashen-animation-') as folder:
             source = Path(folder) / 'master.png'
