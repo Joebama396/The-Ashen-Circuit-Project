@@ -28,7 +28,7 @@ def main():
     g=game.Game()
     # Stage a party that has already collected these tomes for animation QA.
     g.learned.update(('Rail Shot','Venom Cut','Incendiary'))
-    g.room='foundry';g.state='field';g.px,g.py=77,137;g.facing=1
+    g.room='foundry';g.state='field';g.px,g.py=160,264;g.facing=1
     g.world.arrive();g.world.clock=0
     encoder=None
     if args.video:
@@ -55,7 +55,7 @@ def main():
 
     try:
         frame(24)
-        snap('38_seamless_exploration.png')
+        snap('67_hd_overworld_placeholder.png')
         for _ in range(240):
             if g.state!='field':break
             target=g.world.patrols[0].pawns[0]
@@ -66,7 +66,7 @@ def main():
         if g.state!='battle':raise RuntimeError('Demo never made contact')
         while g.world.busy:frame()
         frame(4)
-        snap('47_battle_stances.png')
+        snap('68_hd_seamless_combat.png')
         while g.turn_actor<0:frame()
         frame(12)
         snap('39_seamless_battle.png')
@@ -79,8 +79,8 @@ def main():
         # arcing jump attack separately from the nearby ground rush above.
         rian=g.world.heroes[0]
         jump_target=next(p for p in g.world.active.pawns if p.unit.alive())
-        rian.x,rian.y=72,106;rian.home=rian.pos
-        jump_target.x,jump_target.y=231,91;jump_target.home=jump_target.pos
+        rian.x,rian.y=160,256;rian.home=rian.pos
+        jump_target.x,jump_target.y=448,192;jump_target.home=jump_target.pos
         g.party[0].atb=100;g.turn_actor=0
         g.execute(g.party[0],'Attack');confirm()
         while g.world.action and g.world.action['elapsed']/g.world.action['duration']<.17:frame()

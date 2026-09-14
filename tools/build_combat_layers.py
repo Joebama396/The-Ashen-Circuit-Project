@@ -1,8 +1,9 @@
-"""Bake locked combat poses into true-size transparent PNG atlases.
+"""Bake locked combat poses into native-resolution transparent PNG atlases.
 
-This is an asset-authoring tool, not runtime rendering. It may rotate and reduce
-the 64x80 source artwork, but the resulting 64x64 frames are checked in and are
-always blitted 1:1 by the game.
+This is an asset-authoring tool, not runtime rendering. It may rotate source
+arm pixels into the approved pose blueprints, but it never resizes the 64x80
+source artwork. The resulting 96x96 frames are checked in and always blitted
+1:1 by the game.
 """
 import os
 from pathlib import Path
@@ -15,15 +16,16 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 
 import pygame
-from combat_poses import (ARM_LAYERS, ARM_SLICES, BAKED_SOURCE_SCALE,
+from combat_poses import (ARM_LAYERS, ARM_SLICES, BODY_CELL_OFFSET,
     BODY_PROTECTED_FROM_Y,
     COMBAT_CELL_H, COMBAT_CELL_W, COMBAT_GROUND_ANCHOR, HERO_POSES,
     POSE_BLUEPRINTS, SOURCE_ARM_ANCHOR, SOURCE_ARM_CELL_H,
     SOURCE_ARM_CELL_W, SOURCE_ARM_OFFSET, SOURCE_CELL_H, SOURCE_CELL_W)
 
 
-BODY_OUTPUT=ROOT/'assets/characters/party_combat_bodies_v2.png'
-ARM_OUTPUT=ROOT/'assets/characters/party_combat_arms_v2.png'
+BODY_OUTPUT=ROOT/'assets/characters/party_combat_bodies_hd_v1.png'
+ARM_OUTPUT=ROOT/'assets/characters/party_combat_arms_hd_v1.png'
+OVERWORLD_OUTPUT=ROOT/'assets/characters/party_overworld_hd_placeholder_v1.png'
 
 
 def _inside_polygon(point,polygon):
@@ -65,9 +67,12 @@ def _slice_arm(source_sheet,hero,layer):
         for x in range(SOURCE_CELL_W):
             color=source.get_at((x,y))
             if not color.a:continue
-            front=_is_layer_pixel(hero,'front',x,y,color)
-            rear=_is_layer_pixel(hero,'rear',x,y,color) and not front
-            if (layer=='front' and front) or (layer=='rear' and rear):
+            weapon=_is_layer_pixel(hero,'weapon',x,y,color)
+            front=_is_layer_pixel(hero,'front',x,y,color) and not weapon
+            rear=(_is_layer_pixel(hero,'rear',x,y,color) and
+                  not front and not weapon)
+            if ((layer=='weapon' and weapon) or
+                    (layer=='front' and front) or (layer=='rear' and rear)):
                 result.set_at((x,y),color)
     return result
 
@@ -92,7 +97,7 @@ def _rotate_at(source,pivot,transform):
     return cell
 
 
-def _raw_body(source_sheet,motion_sheet,hero):
+def _raw_body(source_sheet,hero):
     """Build one permanent base body; runtime states never touch this layer."""
     source=source_sheet.subsurface(
         pygame.Rect(hero*SOURCE_CELL_W,0,SOURCE_CELL_W,SOURCE_CELL_H))
@@ -100,21 +105,13 @@ def _raw_body(source_sheet,motion_sheet,hero):
     for y in range(SOURCE_CELL_H):
         for x in range(SOURCE_CELL_W):
             color=source.get_at((x,y))
-            if (color.a and not _is_layer_pixel(hero,'front',x,y,color) and
-                    not _is_layer_pixel(hero,'rear',x,y,color)):
+            if (color.a and not any(_is_layer_pixel(hero,layer,x,y,color)
+                                   for layer in ARM_LAYERS)):
                 body.set_at((x,y),color)
 
-    # Fill only the torso pixels hidden behind the authored source arms. The
-    # narrowed masks above never reach the lower body; this underpainting makes
-    # the chest continuous beneath every transparent pre-baked arm overlay.
-    under=motion_sheet.subsurface(pygame.Rect(8*32,hero*48,32,48)).copy()
-    under=pygame.transform.scale(under,(43,65))
-    for uy in range(under.get_height()):
-        for ux in range(under.get_width()):
-            x,y=10+ux,13+uy
-            if 16<=x<=49 and 15<=y<=62 and body.get_at((x,y)).a==0:
-                color=under.get_at((ux,uy))
-                if color.a:body.set_at((x,y),color)
+    # Do not synthesize, underpaint, or grow any body pixels. The base contains
+    # every authored pixel outside the explicit part slices, byte-for-byte.
+    # This prevents the flat geometric torso patches seen in earlier builds.
     # This is a build-stopping invariant, not a visual guess: lower-body source
     # pixels must survive byte-for-byte in the permanent body layer.
     for y in range(BODY_PROTECTED_FROM_Y[hero],SOURCE_CELL_H):
@@ -124,37 +121,52 @@ def _raw_body(source_sheet,motion_sheet,hero):
     return body
 
 
-def _bake(source,source_anchor):
-    """Reduce authored art once and align it to the shared combat ground point."""
-    size=(round(source.get_width()*BAKED_SOURCE_SCALE),
-          round(source.get_height()*BAKED_SOURCE_SCALE))
-    image=pygame.transform.scale(source,size)
-    anchor=(round(source_anchor[0]*BAKED_SOURCE_SCALE),
-            round(source_anchor[1]*BAKED_SOURCE_SCALE))
+def _place_native(source,source_anchor):
+    """Place unscaled source pixels on the shared transparent actor cell."""
     cell=pygame.Surface((COMBAT_CELL_W,COMBAT_CELL_H),pygame.SRCALPHA)
-    cell.blit(image,(COMBAT_GROUND_ANCHOR[0]-anchor[0],
-                     COMBAT_GROUND_ANCHOR[1]-anchor[1]))
+    cell.blit(source,(COMBAT_GROUND_ANCHOR[0]-source_anchor[0],
+                      COMBAT_GROUND_ANCHOR[1]-source_anchor[1]))
     return cell
 
 
 def generate_atlases(root=ROOT):
     source=pygame.image.load(str(root/'assets/characters/party_battle_v6.png')).convert_alpha()
-    motion=pygame.image.load(str(root/'assets/characters/party_motion_v1.png')).convert_alpha()
     bodies=pygame.Surface((4*COMBAT_CELL_W,COMBAT_CELL_H),pygame.SRCALPHA)
     columns=max(map(len,HERO_POSES.values()))
-    arms=pygame.Surface((columns*COMBAT_CELL_W,8*COMBAT_CELL_H),pygame.SRCALPHA)
+    arms=pygame.Surface((columns*COMBAT_CELL_W,
+                         len(HERO_POSES)*len(ARM_LAYERS)*COMBAT_CELL_H),
+                        pygame.SRCALPHA)
     for hero,states in HERO_POSES.items():
-        body=_bake(_raw_body(source,motion,hero),(SOURCE_CELL_W//2,SOURCE_CELL_H-2))
+        body=_place_native(_raw_body(source,hero),(SOURCE_CELL_W//2,SOURCE_CELL_H-2))
         bodies.blit(body,(hero*COMBAT_CELL_W,0))
         source_layers={layer:_slice_arm(source,hero,layer) for layer in ARM_LAYERS}
         for column,state in enumerate(states):
             for layer in ARM_LAYERS:
                 raw=_rotate_at(source_layers[layer],ARM_SLICES[hero][layer].pivot,
                                POSE_BLUEPRINTS[hero][state][layer])
-                cell=_bake(raw,SOURCE_ARM_ANCHOR)
-                row=hero*2+ARM_LAYERS.index(layer)
+                cell=_place_native(raw,SOURCE_ARM_ANCHOR)
+                row=hero*len(ARM_LAYERS)+ARM_LAYERS.index(layer)
                 arms.blit(cell,(column*COMBAT_CELL_W,row*COMBAT_CELL_H))
     return bodies,arms
+
+
+def generate_overworld_placeholder(bodies,arms):
+    """Provide replaceable 96x96 exploration arrays at the combat-art scale."""
+    from combat_poses import CombatSpriteRig, HERO_COMBAT_PROFILES
+    rig=CombatSpriteRig(bodies,arms)
+    atlas=pygame.Surface((32*COMBAT_CELL_W,4*COMBAT_CELL_H),pygame.SRCALPHA)
+    # Runtime direction order: down, left, right, up. These temporary cells use
+    # the approved idle silhouette until bespoke large walking art is supplied.
+    for hero,profile in enumerate(HERO_COMBAT_PROFILES):
+        for direction in range(4):
+            facing_right=direction==2
+            for frame in range(8):
+                cell=pygame.Surface((COMBAT_CELL_W,COMBAT_CELL_H),pygame.SRCALPHA)
+                rig.draw(cell,hero,profile.idle_state,*COMBAT_GROUND_ANCHOR,
+                         facing_right)
+                atlas.blit(cell,((direction*8+frame)*COMBAT_CELL_W,
+                                 hero*COMBAT_CELL_H))
+    return atlas
 
 
 def save_checked(surface,path):
@@ -169,10 +181,13 @@ def save_checked(surface,path):
 def main():
     pygame.init();pygame.display.set_mode((1,1))
     bodies,arms=generate_atlases()
+    overworld=generate_overworld_placeholder(bodies,arms)
     save_checked(bodies,BODY_OUTPUT)
     save_checked(arms,ARM_OUTPUT)
+    save_checked(overworld,OVERWORLD_OUTPUT)
     print(BODY_OUTPUT)
     print(ARM_OUTPUT)
+    print(OVERWORLD_OUTPUT)
     pygame.quit()
 
 

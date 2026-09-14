@@ -185,13 +185,34 @@ entrances. Gear can also be upgraded at the vault and after the midpoint boss.
 
 ## Controls
 
+The front end has six top-level states: Title, Save Menu, Options,
+Bestiary, Gameplay, and Exit. New Game begins immediately; Load Game opens three
+vertical save cards; Options exposes 10-step music and SFX sliders plus the
+Active/Wait battle setting; and
+Bestiary opens the interactive enemy field-records screen. Populated save cards show the leader,
+location, current objective, and playtime; empty cards are clearly marked. Use
+Up/Down or W/S to move the highlighted selector and Enter/Space to confirm.
+Escape/Backspace returns from the save screen, while Escape/X works elsewhere.
+
+The Bestiary contains the ten enemies used by the game. Encountering an enemy
+unlocks its name, code-rendered sprite, classification, threat level, HP, MP,
+attack, defense, speed, and lore; undiscovered entries remain hidden as `???`.
+Opening the gallery switches to the supplied looping battle track. Leaving it
+stops that track and restores the configured title-menu music hook.
+
+Choosing Exit or closing the window enters the same explicit Exit state. Active
+music and sound channels fade before joystick and mixer resources are released;
+Pygame then closes the display and calls `sys.exit()` to terminate the process.
+
 | Action | Keyboard | Xbox |
 | --- | --- | --- |
 | Move / select | Arrows or WASD | Left stick / D-pad |
 | Confirm / interact | Z / Enter | A |
 | Cancel / field menu | X / Escape | B / Start |
 | Switch ready character (battle) | Q / E | LB / RB |
-| New game at title | N | Y |
+| Title menu / select | Arrows or WASD / Enter or Space | D-pad / A |
+| Adjust title option | Left/Right or A/D | Left stick / D-pad |
+| New-game shortcut at title | N | Y |
 | Quick-save outside combat | F5 | Field menu: Save |
 | Toggle fullscreen | F11 | — |
 
@@ -204,8 +225,12 @@ The AppImage contains code, Python, libraries, the supplied battle theme, and
 sprite data.
 It writes these files in your home folder:
 
-- `~/.local/share/ashen-circuit/save.json`: progress, learned tomes, chest state,
-  consumed stat items, upgraded stats, and encounters.
+- `~/.local/share/ashen-circuit/save.json`: Slot 1 progress, learned tomes,
+  chest state, consumed stat items, upgraded stats, encounters, and discovered
+  Bestiary records.
+- `~/.local/share/ashen-circuit/save-2.json` and `save-3.json`: Slots 2 and 3.
+- `~/.local/share/ashen-circuit/settings.json`: music and SFX volume plus the
+  global Active/Wait battle preference.
 - `~/.local/share/ashen-circuit/save-before-tomes.json`: one-time backup when
   loading a save from an earlier build.
 - `~/.local/state/ashen-circuit/`: launch logs.

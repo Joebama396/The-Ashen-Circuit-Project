@@ -4,6 +4,7 @@ import math
 
 import pygame
 from pixel_ui import label, panel
+from render_config import WORLD_GRID
 
 ARTS = {
     'Rian': [('Frost Edge', 6), ('Crystal Guard', 7), ('Glacial Formation', 12)],
@@ -34,6 +35,7 @@ STATS = {'pow': ('Strength', (1, 3, 5)), 'mag': ('Magic', (1, 3, 5)),
 STAT_ITEMS = {f'{name} +{amount}': (stat, amount)
               for stat, (name, tiers) in STATS.items() for amount in tiers}
 WHITE, GOLD, CYAN, MUTED = (235, 231, 218), (235, 179, 77), (78, 211, 219), (103, 118, 133)
+INTERACT_RADIUS=WORLD_GRID//3
 
 # Every technique has exactly one physical source, including personal commands.
 TOME_ROOMS = {
@@ -65,11 +67,11 @@ def make_treasure(rooms):
     """Stable IDs and deterministic contents: revisiting never rerolls treasure."""
     result = {}
     attributes = tuple(STATS)
-    points = ((76, 80), (244, 81), (82, 136))
+    points = ((192,160),(448,160),(192,288))
     for index, (room, (_, danger, _)) in enumerate(rooms.items()):
         tomes = TOME_ROOMS.get(room, ())
         tier = 0 if danger <= 1 else 1 if danger <= 3 else 2
-        positions = ((76, 80), (244, 81), (82, 136), (244, 136)) if room == 'gate' else points
+        positions = ((192,160),(448,160),(192,288),(448,288)) if room == 'gate' else points
         chests = []
         for slot, pos in enumerate(positions):
             stat = attributes[(index * 3 + slot) % len(attributes)]
@@ -126,12 +128,13 @@ class ProgressionMixin:
 
     def chest_in_reach(self):
         chest = self.nearest_chest(unopened=True)
-        return chest if chest and math.dist(chest.pos, (self.px, self.py)) <= 22 else None
+        return chest if chest and math.dist(chest.pos, (self.px, self.py)) <= INTERACT_RADIUS else None
 
     def open_chest(self, chest):
         if (self.state != 'field' or chest.room != self.room or
                 chest not in self.treasure[self.room] or
-                chest.uid in self.opened_chests or math.dist(chest.pos, (self.px, self.py)) > 22):
+                chest.uid in self.opened_chests or
+                math.dist(chest.pos, (self.px, self.py)) > INTERACT_RADIUS):
             return False
         self.opened_chests.add(chest.uid)
         lines = []

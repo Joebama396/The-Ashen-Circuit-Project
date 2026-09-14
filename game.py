@@ -1,18 +1,41 @@
 #!/usr/bin/env python3
 import os, sys, json, math, random
+from array import array
 from pathlib import Path
 import pygame
-from seamless import WorldCombat
+from seamless import Pawn, WorldCombat
+from bestiary_menu import BestiaryMenu
 from pixel_ui import label, panel
+from exit_utils import graceful_exit
+from options_menu import OptionsMenu
 from progression import (ProgressionMixin, ARTS, LINKS_TECH, COSTS, CONSUMABLES,
                          ALL_TOMES, STATS, make_treasure)
 from render_config import (ACTOR_CELL_H, ACTOR_CELL_W, ACTOR_GROUND_ANCHOR,
                            DISPLAY_SCALE, UI_H, UI_W, VIEW_H, VIEW_W, WORLD_GRID)
+from save_menu import SaveMenu
+from title_screen import (BESTIARY, EXIT, GAMEPLAY, OPTIONS, SAVE_MENU, TITLE,
+                          TitleScreen)
 
 W,H,SCALE=VIEW_W,VIEW_H,DISPLAY_SCALE
 TILE=WORLD_GRID
 FPS=60
 SAVE=Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))/'ashen-circuit/save.json'
+def save_path_for_slot(slot):
+ if slot not in (1,2,3):raise ValueError(f'Invalid save slot: {slot}')
+ return SAVE if slot==1 else SAVE.with_name(f'{SAVE.stem}-{slot}{SAVE.suffix}')
+
+def settings_path():return SAVE.with_name('settings.json')
+
+def objective_for_progress(flags):
+ flags=set(flags);relays=len(flags&{'relay_a','relay_b','relay_c'})
+ if 'dragon_down' in flags:return 'Vharos defeated'
+ if 'pre_dragon' in flags:return 'Defeat Vharos'
+ if 'vael_down' in flags and relays==3:return 'Enter the Dragon Cradle'
+ if 'vael_down' in flags:return f'Sever the relays ({3-relays} remaining)'
+ if relays==3:return 'Defeat Commander Vael'
+ if 'seen_nexus' in flags or relays:return f'Sever the relays ({3-relays} remaining)'
+ return 'Reach the Central Dynamo'
+
 def resource_path(rel):
  base=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent));return base/rel
 
@@ -127,11 +150,38 @@ class Game(ProgressionMixin):
   self.stars=[(random.randrange(UI_W),random.randrange(UI_H),random.choice([1,1,2])) for _ in range(80)]
   self.joy=None;self.axis_latch=[0,0];self.pad_buttons=set()
   if pygame.joystick.get_count(): self.connect_controller(0)
-  self.music_ready=False;self.battle_music_playing=False
+  self.music_volume=.8;self.sfx_volume=.8
+  self.options_test_sound=self.make_options_test_sound()
+  self.music_ready=False;self.battle_music_playing=False;self.bestiary_music_playing=False
   self.battle_music_path=resource_path('assets/audio/battle_theme_1.mp3')
   try:self.make_music()
   except (pygame.error,OSError):pass
   self.world=WorldCombat(self,ROOMS,LINKS,LOCKS,Enemy,LINKS_TECH)
+  self.active_save_slot=1
+  self.discovered_enemies=self.read_discovered_enemies()
+  self.app_state=TITLE
+  save_menu=SaveMenu(
+   slot_paths=lambda:[save_path_for_slot(slot) for slot in (1,2,3)],
+   on_load=self.load_from_title,
+   location_names={key:value[0] for key,value in ROOMS.items()},
+   objective_resolver=lambda data:objective_for_progress(data.get('flags',())))
+  options_menu=OptionsMenu(
+   settings_path=settings_path,on_music_volume=self.set_music_volume,
+   on_sfx_volume=self.set_sfx_volume,on_battle_system=self.set_battle_system,
+   test_sfx=self.play_options_test_sound)
+  bestiary_menu=BestiaryMenu(
+   discovered=lambda:self.discovered_enemies,
+   preview_provider=self.bestiary_preview,
+   on_enter=self.start_bestiary_music,on_exit=self.leave_bestiary_music)
+  self.title_screen=TitleScreen(
+   on_new_game=self.new_game,on_load_game=self.load_from_title,
+   save_exists=lambda:any(save_path_for_slot(slot).exists() for slot in (1,2,3)),
+   save_menu=save_menu,options_menu=options_menu,bestiary_menu=bestiary_menu,
+   get_battle_mode=lambda:self.battle_mode,
+   toggle_battle_mode=self.toggle_title_battle_mode,
+   on_exit=self.exit_application,
+   # Drop a licensed track at this path to enable the menu-music hooks.
+   music_path=resource_path('assets/audio/menu_theme.ogg'))
 
  def connect_controller(self,index=0):
   try:
@@ -145,61 +195,161 @@ class Game(ProgressionMixin):
   pygame.mixer.music.load(str(self.battle_music_path))
   self.music_ready=True
 
+ def make_options_test_sound(self):
+  try:
+   rate=pygame.mixer.get_init()[0];samples=array('h')
+   for index in range(int(rate*.065)):
+    value=int(5200*math.sin(2*math.pi*660*index/rate)*(1-index/(rate*.065)))
+    samples.extend((value,value))
+   return pygame.mixer.Sound(buffer=samples.tobytes())
+  except (pygame.error,TypeError):return None
+
+ def set_music_volume(self,volume):
+  self.music_volume=clamp(float(volume),0,1)
+  if pygame.mixer.get_init():pygame.mixer.music.set_volume(self.music_volume)
+
+ def set_sfx_volume(self,volume):
+  self.sfx_volume=clamp(float(volume),0,1)
+  if self.options_test_sound:self.options_test_sound.set_volume(self.sfx_volume)
+
+ def set_battle_system(self,mode):
+  if mode in ('Wait','Active'):self.battle_mode=mode
+
+ def play_options_test_sound(self,volume=None):
+  if volume is not None:self.set_sfx_volume(volume)
+  if self.options_test_sound:self.options_test_sound.play()
+
  def start_battle_music(self):
   if not self.music_ready:return
+  self.bestiary_music_playing=False
+  pygame.mixer.music.load(str(self.battle_music_path))
   pygame.mixer.music.stop()
+  pygame.mixer.music.set_volume(self.music_volume)
   pygame.mixer.music.play(-1)
   self.battle_music_playing=True
+
+ def start_bestiary_music(self):
+  self.bestiary_music_playing=False
+  if not self.music_ready:return
+  try:
+   pygame.mixer.music.stop()
+   pygame.mixer.music.load(str(self.battle_music_path))
+   pygame.mixer.music.set_volume(self.music_volume)
+   pygame.mixer.music.play(-1,fade_ms=250)
+   self.bestiary_music_playing=True
+  except (pygame.error,OSError):pass
+
+ def leave_bestiary_music(self):
+  if self.bestiary_music_playing:
+   pygame.mixer.music.stop();self.bestiary_music_playing=False
+  if hasattr(self,'title_screen'):self.title_screen.play_music()
 
  def stop_battle_music(self):
   if not self.battle_music_playing:return
   pygame.mixer.music.stop()
   self.battle_music_playing=False
 
+ def set_app_state(self,state):
+  self.app_state=state
+  if hasattr(self,'title_screen'):self.title_screen.set_state(state)
+
+ def enter_title(self):
+  self.stop_battle_music();self.state='title';self.set_app_state(TITLE)
+
+ def enter_gameplay(self):
+  self.set_app_state(GAMEPLAY)
+
+ def exit_application(self):
+  if self.app_state!=EXIT:self.set_app_state(EXIT)
+  graceful_exit()
+
+ def current_save_path(self):
+  return save_path_for_slot(self.active_save_slot)
+
+ def load_from_title(self,slot=1):
+  path=save_path_for_slot(slot)
+  if not path.exists():return False
+  self.active_save_slot=slot;self.load()
+  return self.state!='title'
+
+ def toggle_title_battle_mode(self):
+  self.set_battle_system('Wait' if self.battle_mode=='Active' else 'Active')
+
+ def read_discovered_enemies(self):
+  known=set()
+  for slot in (1,2,3):
+   try:
+    data=json.loads(save_path_for_slot(slot).read_text())
+   except (OSError,ValueError,TypeError):continue
+   known.update(data.get('discovered_enemies',()))
+   flags=set(data.get('flags',()))
+   if 'vael_down' in flags:known.add('vael')
+   if 'dragon_down' in flags:known.add('dragon')
+  return known&set(ENEMIES)
+
+ def bestiary_preview(self,key):
+  if key not in ENEMIES:return None
+  return self.world.enemy_image(Pawn(Enemy(key),40,69,direction=2))
+
  def save(self):
   if self.state=='battle': return
-  SAVE.parent.mkdir(parents=True,exist_ok=True)
-  data={'room':self.room,'prev':self.prev,'px':self.px,'py':self.py,'flags':list(self.flags),'locks':[list(x) for x in self.open_locks],
+  path=self.current_save_path();path.parent.mkdir(parents=True,exist_ok=True)
+  data={'metadata':{'name':self.party[0].name,'location':ROOMS[self.room][0],
+                    'objective':objective_for_progress(self.flags),
+                    'playtime':self.playtime},
+   'room':self.room,'prev':self.prev,'px':self.px,'py':self.py,'flags':list(self.flags),'locks':[list(x) for x in self.open_locks],
    'keys':self.keys,'gold':self.gold,'items':self.items,'weapon':self.weapon,'armor':self.armor,'playtime':self.playtime,
    'battle_mode':self.battle_mode,
    'party':[{'hp':h.hp,'mp':h.mp,'gauge':h.gauge,'buffs':h.buffs,
              'stats':{stat:getattr(h,stat) for stat in STATS}} for h in self.party],
    'learned_tomes':sorted(self.learned),'opened_chests':sorted(self.opened_chests),
-   'cleared_encounters':sorted(self.world.cleared),'save_version':4}
-  temporary=SAVE.with_suffix('.tmp');temporary.write_text(json.dumps(data));temporary.replace(SAVE)
+   'discovered_enemies':sorted(self.discovered_enemies),
+   'cleared_encounters':sorted(self.world.cleared),'save_version':5}
+  temporary=path.with_suffix('.tmp');temporary.write_text(json.dumps(data));temporary.replace(path)
   self.toast='Game saved';self.toast_t=100
 
- def load(self):
+ def load(self,slot=None):
   self.stop_battle_music()
+  if slot is not None:self.active_save_slot=slot
+  path=self.current_save_path()
   try:
-   d=json.loads(SAVE.read_text());self.room=d['room'];self.prev=d.get('prev');self.px=d.get('px',320);self.py=d.get('py',220)
+   d=json.loads(path.read_text());self.room=d['room'];self.prev=d.get('prev');self.px=d.get('px',320);self.py=d.get('py',220)
    self.flags=set(d['flags']);self.open_locks={tuple(x) for x in d['locks']};self.keys=d['keys'];self.gold=d['gold'];self.items=d['items'];self.weapon=d['weapon'];self.armor=d['armor'];self.playtime=d['playtime']
-   self.battle_mode=d.get('battle_mode','Active') if d.get('battle_mode','Active') in ('Active','Wait') else 'Active'
+   if settings_path().exists():
+    self.set_battle_system(self.title_screen.options_menu.settings['battle_system'])
+   else:
+    self.set_battle_system(d.get('battle_mode','Active'))
+    self.title_screen.options_menu.set_battle_system(self.battle_mode)
    self.party=new_party();self.init_progression()
    for h,v in zip(self.party,d['party']):
     for stat,value in v.get('stats',{}).items():
      if stat in STATS:setattr(h,stat,int(value))
     h.hp=clamp(v['hp'],0,h.maxhp);h.mp=clamp(v['mp'],0,h.maxmp);h.gauge=v.get('gauge',0);h.atb=0;h.buffs=v.get('buffs',{})
    self.learned=set(d.get('learned_tomes',[])) & ALL_TOMES
+   self.discovered_enemies.update(set(d.get('discovered_enemies',()))&set(ENEMIES))
+   if 'vael_down' in self.flags:self.discovered_enemies.add('vael')
+   if 'dragon_down' in self.flags:self.discovered_enemies.add('dragon')
    valid={c.uid for chests in self.treasure.values() for c in chests}
    self.opened_chests=set(d.get('opened_chests',[])) & valid
    if d.get('save_version',1)<3:
-    backup=SAVE.with_name('save-before-tomes.json')
-    if not backup.exists():backup.write_bytes(SAVE.read_bytes())
+    backup=(path.with_name('save-before-tomes.json') if self.active_save_slot==1
+            else path.with_name(f'{path.stem}-before-tomes{path.suffix}'))
+    if not backup.exists():backup.write_bytes(path.read_bytes())
     self.open_locks &= LOCKS
     self.keys=min(self.keys,max(0,len(self.flags & set(RELAY_ROOM))-len(self.open_locks)))
    if d.get('save_version',1)<4:
     # v1.5 and older used the 320x180 placeholder coordinate space.
     self.px*=2;self.py*=2
    self.world.cleared=set(d.get('cleared_encounters',[]));self.world.arrive()
-   self.state='field';self.toast='Save loaded';self.toast_t=120
+   self.state='field';self.enter_gameplay();self.toast='Save loaded';self.toast_t=120
   except (ValueError,KeyError,OSError,TypeError) as error:
    print(f'Could not load save: {error}',file=sys.stderr)
-   self.state='title';self.toast='Save could not be read. N: new game.';self.toast_t=600
+   self.enter_title();self.toast='Save could not be read.';self.toast_t=600
 
  def new_game(self):
   self.stop_battle_music()
   self.__dict__.update(room='gate',prev=None,px=320,py=220,flags=set(),open_locks=set(),keys=0,gold=0,items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1},weapon=0,armor=0,playtime=0,party=new_party(),state='field')
+  self.enter_gameplay()
   self.init_progression();self.world.reset()
   self.start_dialog(STORY['gate']+[('RIAN','Four training caches by the entrance. Take the tomes before we meet the patrols.'),('SYSTEM','Approach a chest and press A / Z. Tomes teach techniques; stat items are assigned in Items & Growth.')]);self.flags.add('seen_gate')
 
@@ -231,6 +381,7 @@ class Game(ProgressionMixin):
   if r=='cradle' and 'dragon_down' not in self.flags:self.start_dialog([('VAEL','You are too late.'),('MAREK','Vael? You should be unconscious.'),('VAEL','The Engine requires no commander. Only a target.'),('SYSTEM','CAELUS LANCE: ACQUIRING'),('TESS','The dragon is the focusing array.'),('RIAN','Then we break it before—'),('SYSTEM','CAELUS LANCE: FIRED'),('BRANN','...The western horizon.'),('RIAN','We cannot undo that shot. We can make it the last.')]);self.flags.add('pre_dragon')
 
  def start_battle(self,keys,boss=None):
+  self.discovered_enemies.update(set(keys)&set(ENEMIES))
   self.world.begin(keys,boss)
   self.start_battle_music()
 
@@ -535,18 +686,21 @@ class Game(ProgressionMixin):
    elif c=='Party & Arts':self.manual_type='party';self.manual_page=0;self.state='manual'
    elif c=='Link Manual':self.manual_type='links';self.manual_page=0;self.state='manual'
    elif c.startswith('Battle Mode:'):
-    self.battle_mode='Wait' if self.battle_mode=='Active' else 'Active'
+    self.toggle_title_battle_mode()
+    self.title_screen.options_menu.set_battle_system(self.battle_mode)
+    self.title_screen.options_menu.save()
     self.toast=f'Battle mode: {self.battle_mode}';self.toast_t=120
    elif c=='Save':self.state='field';self.save()
    elif c=='Return to field':self.state='field'
-   elif c=='Quit to title':self.state='title'
+   elif c=='Quit to title':self.enter_title()
 
  def menu_options(self):
   return ['Items & Growth','Party & Arts','Link Manual',f'Battle Mode: {self.battle_mode}',
           'Save','Return to field','Quit to title']
 
  def event(self,e):
-  if e.type==pygame.QUIT:return False
+  if e.type==pygame.QUIT:
+   self.set_app_state(EXIT);self.exit_application()
   if e.type==pygame.JOYDEVICEADDED:
    if self.joy is None:self.connect_controller(e.device_index)
    return True
@@ -571,10 +725,11 @@ class Game(ProgressionMixin):
    return self.controller_direction(key)
   if e.type==pygame.KEYDOWN and e.key==pygame.K_F11:
    self.full=not self.full;self.screen=pygame.display.set_mode((0,0),pygame.FULLSCREEN) if self.full else pygame.display.set_mode((W*SCALE,H*SCALE));return True
-  if self.state=='title' and e.type==pygame.KEYDOWN:
-   if e.key in (pygame.K_RETURN,pygame.K_z):self.load() if SAVE.exists() else self.new_game()
-   elif e.key==pygame.K_n:self.new_game()
-  elif self.state=='dialog' and e.type==pygame.KEYDOWN and e.key in (pygame.K_RETURN,pygame.K_z,pygame.K_SPACE):
+  if self.state=='title':
+   if self.app_state==GAMEPLAY:self.set_app_state(TITLE)
+   self.app_state=self.title_screen.handle_input(e)
+   return True
+  if self.state=='dialog' and e.type==pygame.KEYDOWN and e.key in (pygame.K_RETURN,pygame.K_z,pygame.K_SPACE):
    self.dindex+=1
    if self.dindex>=len(self.dialog):
     if self.world.pending_boss:self.start_battle(['dragon'],'dragon')
@@ -588,16 +743,18 @@ class Game(ProgressionMixin):
    if e.key in (pygame.K_ESCAPE,pygame.K_x):self.state='menu'
    elif e.key in (pygame.K_LEFT,pygame.K_UP,pygame.K_a,pygame.K_w):self.manual_page=max(0,self.manual_page-1)
    elif e.key in (pygame.K_RIGHT,pygame.K_DOWN,pygame.K_d,pygame.K_s,pygame.K_z,pygame.K_RETURN):self.manual_page+=1
-  elif self.state=='gameover' and e.type==pygame.KEYDOWN:self.load() if SAVE.exists() else self.new_game()
+  elif self.state=='gameover' and e.type==pygame.KEYDOWN:self.load() if self.current_save_path().exists() else self.new_game()
   elif self.state=='ending' and e.type==pygame.KEYDOWN:self.dindex+=1
   return True
 
  def update(self):
   now=pygame.time.get_ticks();dt=now-self.last_tick;self.last_tick=now
   seconds=min(.05,max(0,dt/1000))
-  if self.state not in ('title','gameover'):self.playtime+=dt/1000
   if self.log_wait:self.log_wait-=1
   if self.toast_t:self.toast_t-=1
+  if self.state=='title':
+   self.title_screen.update(seconds);return
+  if self.state!='gameover':self.playtime+=dt/1000
   if self.state=='field':
    k=pygame.key.get_pressed();dx=(k[pygame.K_RIGHT] or k[pygame.K_d])-(k[pygame.K_LEFT] or k[pygame.K_a]);dy=(k[pygame.K_DOWN] or k[pygame.K_s])-(k[pygame.K_UP] or k[pygame.K_w])
    if self.joy:
@@ -630,16 +787,8 @@ class Game(ProgressionMixin):
 
 
  def draw_title(self):
-  self.canvas.fill((8,9,18))
-  for x,y,s in self.stars:pygame.draw.rect(self.canvas,(70+s*30,75+s*25,95+s*25),(x,y,s,s))
-  # dragon silhouette
-  pygame.draw.polygon(self.canvas,(42,30,58),[(35,92),(92,55),(145,81),(172,45),(196,82),(286,58),(244,105),(286,125),(193,112),(160,148),(127,111),(45,128),(77,105)])
-  self.canvas.blit(text('THE ASHEN',self.big,GOLD),(92,28));self.canvas.blit(text('CIRCUIT',self.big,CYAN),(112,49))
-  self.canvas.blit(text('An original 16-bit dungeon RPG',self.font),(79,74))
-  blink=(pygame.time.get_ticks()//500)%2
-  if blink:self.canvas.blit(text('ENTER  Continue / Begin',self.font),(91,143))
-  if SAVE.exists():self.canvas.blit(text('N / Xbox Y  New Game',self.small),(113,158))
-  if self.toast_t:label(self.canvas,self.toast,8,171,CYAN,limit=75)
+  self.title_screen.draw(self.canvas)
+  if self.toast_t:label(self.canvas,self.toast,8,171,CYAN,limit=50)
 
  def draw_room(self,hud=True):
   self.world.draw_scene(hud)
