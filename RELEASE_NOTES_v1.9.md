@@ -20,6 +20,7 @@ battlefield a calmer, more deliberate idle rhythm.
 ## Notes
 
 - Platform: Linux x86_64; packaged and tested through GitHub Actions on Ubuntu.
+- Validation: all 136 automated tests and the packaged-game smoke test pass.
 - Keyboard and Xbox-compatible controller input remain supported.
 - Includes the v1.8 directional battle animations, defeat screen, and supplied
   Game Over music.
