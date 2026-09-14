@@ -99,6 +99,7 @@ class WorldCombat:
         self.combat_rig=CombatSpriteRig(game.combat_body_sheet,game.combat_arm_sheet)
         self.battle_animation_atlas=(BattleAnimationAtlas(game.battle_animation_sheet)
                                      if game.battle_animation_sheet is not None else None)
+        self.battle_directional_sheets=getattr(game,'battle_directional_sheets',{})
         self.battle_ready_sheet=game.battle_ready_sheet
         # Kept as public aliases for sprite/debug tooling. Rendering ownership
         # lives in CombatSpriteRig rather than the world/body draw loop.
@@ -158,11 +159,21 @@ class WorldCombat:
             p.weapon_source_rect=self.combat_rig.arm_rect(p.hero,state,'weapon')
 
     def has_battle_clips(self,p):
-        """Rian owns the first full-frame atlas; other heroes keep their rigs."""
-        return self.battle_animation_atlas is not None and p.hero==0
+        """Rian can animate from either the atlas or directional strips."""
+        return p.hero==0 and bool(self.battle_animation_atlas or
+                                  self.battle_directional_sheets)
+
+    def has_directional_clip(self,p,name):
+        prefix={'sword_basic':'sword_basic_','battle_idle':'battle_idle_',
+                'hurt':'hurt_','defeated':'defeated_'}.get(name,'')
+        direction=('back_up' if p.direction==0 else
+                   'front_down' if p.direction==2 else 'profile_right')
+        return prefix+direction in self.battle_directional_sheets
 
     def set_battle_clip(self,p,name,restart=False,force=False):
         if not self.has_battle_clips(p) or name not in BATTLE_CLIPS:return False
+        if self.battle_animation_atlas is None and not self.has_directional_clip(p,name):
+            return False
         requested=BATTLE_CLIPS[name]
         active=BATTLE_CLIPS.get(p.animation_clip)
         if (not force and active and not p.animation_finished and
@@ -1076,20 +1087,26 @@ class WorldCombat:
         self.g.canvas.blit(image,(round(x-ACTOR_GROUND_ANCHOR[0]),
                                   round(y-ACTOR_GROUND_ANCHOR[1])))
 
-    def draw_pawn(self, p):
+    def draw_pawn(self, p, draw_shadow=True):
         g=self.g;s=g.canvas
         x,ground_y=int(p.x),int(p.y)
         y=ground_y-int(p.air)
-        pygame.draw.ellipse(s,(16,24,28),(x-20,ground_y-5,40,10))
+        if draw_shadow:pygame.draw.ellipse(s,(16,24,28),(x-20,ground_y-5,40,10))
         if p.hero>=0:
             if (g.state=='battle' and p.hero==g.turn_actor and
                 (not self.busy or self.enemy_action_active)):
                 pygame.draw.ellipse(s,ELEMENT_COLORS[p.hero],(x-22,ground_y-6,44,12),2)
                 pygame.draw.polygon(s,GOLD,[(x-5,y-92),(x+5,y-92),(x,y-86)])
-            combat_rig=(g.state in ('battle','victory') and self.phase!='forming')
-            full_frame=(combat_rig and self.has_battle_clips(p) and
+            combat_rig=(g.state in ('battle','victory','gameover') and self.phase!='forming')
+            full_frame=(combat_rig and self.battle_animation_atlas is not None and
+                        p.hero==0 and
                         p.animation_clip in BATTLE_CLIPS)
-            if full_frame:
+            directional=self._directional_frame(p) if combat_rig else None
+            if directional is not None:
+                sheet, local_frame=directional
+                src=sheet.subsurface(pygame.Rect(local_frame*64,0,64,64))
+                s.blit(src,(round(x-32),round(y-64)))
+            elif full_frame:
                 self.battle_animation_atlas.draw(
                     s,p.animation_frame,x,y,p.direction==1)
             elif p.unit.alive():
@@ -1107,6 +1124,7 @@ class WorldCombat:
                 src.set_alpha(130)
                 s.blit(src,(x-ACTOR_GROUND_ANCHOR[0],
                             ground_y-ACTOR_GROUND_ANCHOR[1]))
+
         elif p.unit.alive():
             s.blit(self.enemy_image(p),(x-40,y-69))
             if g.state=='battle':
@@ -1119,6 +1137,25 @@ class WorldCombat:
             if self.target is p.unit and self.targeting:
                 pygame.draw.ellipse(s,RED,(x-14,y-4,28,8),1)
                 pygame.draw.polygon(s,WHITE,[(x-3,y-39),(x+3,y-39),(x,y-35)])
+
+    def _directional_frame(self,p):
+        """Return an authored 64px directional strip frame when available."""
+        if p.hero!=0 or p.animation_clip not in ('battle_idle','battle_dash','sword_basic','hurt','defeated'):
+            return None
+        prefix={'sword_basic':'sword_basic_','battle_idle':'battle_idle_',
+                'hurt':'hurt_','defeated':'defeated_'}.get(p.animation_clip,'')
+        if p.direction==0:
+            sheet=self.battle_directional_sheets.get(prefix+'back_up')
+        elif p.direction==2:
+            sheet=self.battle_directional_sheets.get(prefix+'front_down')
+        else:
+            sheet=self.battle_directional_sheets.get(prefix+'profile_right')
+        if sheet is None:return None
+        clip=BATTLE_CLIPS[p.animation_clip]
+        # Stationary battle idle is deliberately a held guard pose.  Motion is
+        # reserved for battle_dash, whose four frames supply the guarded walk.
+        local_frame=0 if p.animation_clip in ('battle_idle','defeated') else p.animation_frame-clip.start
+        return sheet,local_frame
 
     def draw_scene(self, hud=True):
         self.draw_ground()
@@ -1134,6 +1171,11 @@ class WorldCombat:
         if hud:
             draw=self.draw_battle_hud if self.g.state in ('battle','victory') else self.draw_field_hud
             self.g.draw_ui_overlay(draw)
+
+    def draw_heroes_only(self):
+        """Redraw only playable characters above the game-over fade."""
+        for p in sorted(self.heroes,key=lambda pawn:pawn.y):
+            self.draw_pawn(p,draw_shadow=False)
 
     def draw_chest(self, chest):
         s=self.g.canvas;x,y=chest.pos

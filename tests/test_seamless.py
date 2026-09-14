@@ -160,13 +160,13 @@ class SeamlessTests(unittest.TestCase):
         g.world.target=target.unit;g.world.queue_action(hero,'Attack')
         self.assertEqual(['jump'],g.world.action['motions'])
         g.world.update(.1)
-        self.assertEqual('jump_start',pawn.animation_state)
+        self.assertEqual('battle_dash',pawn.animation_state)
         self.assertEqual(0,pawn.air)
         g.world.update(.13)
-        self.assertEqual('overhead_raise',pawn.animation_state)
+        self.assertEqual('battle_dash',pawn.animation_state)
         self.assertGreater(pawn.air,6)
         g.world.update(.22)
-        self.assertEqual('downward_landing_strike',pawn.animation_state)
+        self.assertEqual('sword_basic',pawn.animation_state)
         self.settle()
 
     def test_overworld_sets_four_directional_moving_states_and_sway_frames(self):
@@ -210,11 +210,12 @@ class SeamlessTests(unittest.TestCase):
     def test_named_idle_combat_stances_match_each_character_role(self):
         g=self.battle()
         self.assertEqual(
-            ['low_sword_ready','high_ready','split-arm','low_ready'],
+            ['battle_dash','high_ready','split-arm','low_ready'],
             [p.animation_state for p in g.world.heroes])
 
     def test_arm_source_rects_change_without_swapping_the_body_rect(self):
         g=self.battle();pawn=g.world.heroes[0]
+        g.world.set_animation(pawn,pawn.profile.idle_state,0)
         body=g.world.combat_body_source_rect(pawn).copy()
         idle=tuple(g.world.combat_arm_source_rect(pawn,layer).copy()
                    for layer in combat_poses.ARM_LAYERS)
@@ -415,12 +416,15 @@ class SeamlessTests(unittest.TestCase):
         g=self.battle();pawn=g.world.heroes[0]
         pawn.moving=False;g.turn_actor=-1
         with patch.object(g,'draw_party_member') as field_draw, \
-             patch.object(g.world,'draw_battle_ready') as battle_draw:
+             patch.object(g.world,'draw_battle_ready') as battle_draw, \
+             patch.object(g.world,'_directional_frame',
+                          wraps=g.world._directional_frame) as directional_draw:
             g.state='field';g.world.draw_pawn(pawn)
             field_draw.assert_called_once();battle_draw.assert_not_called()
             field_draw.reset_mock();g.state='battle';g.world.phase='idle'
             g.world.draw_pawn(pawn)
-            battle_draw.assert_called_once();field_draw.assert_not_called()
+            directional_draw.assert_called_once()
+            battle_draw.assert_not_called();field_draw.assert_not_called()
 
     def test_high_detail_grid_and_atlases_have_native_geometry(self):
         self.assertEqual(64,render_config.WORLD_GRID)

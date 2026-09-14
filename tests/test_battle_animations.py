@@ -11,6 +11,15 @@ from tools.build_battle_animation_atlas import (ACTOR_H, ACTOR_W, CELL_OFFSET,
 
 
 class BattleAnimationTests(unittest.TestCase):
+    def test_directional_fainted_assets_are_single_chroma_key_cells(self):
+        battle_dir = Path(__file__).parents[1] / 'assets' / 'characters' / 'battle'
+        for direction in ('front_down', 'back_up', 'profile_right'):
+            path = battle_dir / f'rian_fainted_{direction}_64x64.png'
+            with self.subTest(direction=direction):
+                image = Image.open(path).convert('RGB')
+                self.assertEqual((64, 64), image.size)
+                self.assertEqual((255, 0, 255), image.getpixel((0, 0)))
+
     def test_clip_ranges_cover_master_once_in_declared_order(self):
         self.assertTrue(battle_animations.validate_clip_contract())
         frames = [frame for clip in battle_animations.BATTLE_CLIPS.values()

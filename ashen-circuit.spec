@@ -3,7 +3,7 @@
 from pathlib import Path
 
 
-datas=[('assets/characters/party_overworld_hd_v2.png', 'assets/characters'), ('assets/characters/party_battle_ready_hd_v1.png', 'assets/characters'), ('assets/characters/party_combat_bodies_hd_v1.png', 'assets/characters'), ('assets/characters/party_combat_arms_hd_v1.png', 'assets/characters'), ('assets/audio/battle_theme_1.mp3', 'assets/audio'), ('assets/audio/menu_theme.mp3', 'assets/audio')]
+datas=[('assets/characters/party_overworld_hd_v2.png', 'assets/characters'), ('assets/characters/party_battle_ready_hd_v1.png', 'assets/characters'), ('assets/characters/party_combat_bodies_hd_v1.png', 'assets/characters'), ('assets/characters/party_combat_arms_hd_v1.png', 'assets/characters'), ('assets/characters/battle', 'assets/characters/battle'), ('assets/audio/battle_theme_1.mp3', 'assets/audio'), ('assets/audio/menu_theme.mp3', 'assets/audio'), ('assets/audio/game_over.mp3', 'assets/audio')]
 if Path('assets/characters/rian_battle_animations_hd_v1.png').is_file():
     datas.append(('assets/characters/rian_battle_animations_hd_v1.png', 'assets/characters'))
 

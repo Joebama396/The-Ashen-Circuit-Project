@@ -93,6 +93,20 @@ master art is checked in; the existing modular battle rig remains the fallback.
 Clip timing, loops, impact frames, recovery transitions, and interrupt priorities
 are defined in `battle_animations.py`.
 
+## `battle/` directional Rian animations
+
+Rian's approved battle art is stored as native 64-pixel cells on `#ff00ff`:
+
+- Stationary battle idle: four-frame source strips held on frame one.
+- Guarded battle movement/dash: four frames per direction.
+- Upward sword slash: four frames per direction.
+- Hurt/recoil: three frames per direction.
+- Fainted/defeated: one held frame per direction.
+
+Every set provides `front_down`, `back_up`, and `profile_right`; left profile is
+the lossless horizontal mirror of the right-facing source. The runtime removes
+the magenta key while loading and never rescales the authored cells.
+
 ## `party_battle_reference_v5.png`
 
 The full-resolution battle reference establishing costume, weapon, palette,

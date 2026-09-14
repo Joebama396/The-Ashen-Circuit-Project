@@ -3,6 +3,7 @@ import os, sys, json, math, random
 from array import array
 from pathlib import Path
 import pygame
+from defeat_screen import FADE_SECONDS, draw_defeat_screen
 from seamless import Pawn, WorldCombat
 from bestiary_menu import BestiaryMenu
 from pixel_ui import label, panel
@@ -145,6 +146,25 @@ class Game(ProgressionMixin):
   # Existing combat poses remain the lossless fallback during that handoff.
   self.battle_animation_sheet=(pygame.image.load(str(battle_animation_path)).convert_alpha()
                                if Path(battle_animation_path).is_file() else None)
+  battle_dir_root=resource_path('assets/characters/battle')
+  self.battle_directional_sheets={}
+  def load_battle_strip(path):
+   sheet=pygame.image.load(str(path)).convert_alpha()
+   sheet.set_colorkey((255,0,255))
+   return sheet
+  for key in ('front_down','back_up','profile_right'):
+   path=Path(battle_dir_root)/f'rian_battle_guard_walk_{key}_256x64.png'
+   if not path.is_file(): path=Path(battle_dir_root)/f'rian_battle_dash_{key}_256x64.png'
+   if path.is_file(): self.battle_directional_sheets[key]=load_battle_strip(path)
+  for key in ('front_down','back_up','profile_right'):
+   slash_path=Path(battle_dir_root)/f'rian_sword_basic_upward_slash_{key}_256x64.png'
+   if slash_path.is_file(): self.battle_directional_sheets[f'sword_basic_{key}']=load_battle_strip(slash_path)
+   idle_path=Path(battle_dir_root)/f'rian_battle_idle_{key}_256x64.png'
+   if idle_path.is_file(): self.battle_directional_sheets[f'battle_idle_{key}']=load_battle_strip(idle_path)
+   hurt_path=Path(battle_dir_root)/f'rian_hurt_recoil_{key}_192x64.png'
+   if hurt_path.is_file(): self.battle_directional_sheets[f'hurt_{key}']=load_battle_strip(hurt_path)
+   fainted_path=Path(battle_dir_root)/f'rian_fainted_{key}_64x64.png'
+   if fainted_path.is_file(): self.battle_directional_sheets[f'defeated_{key}']=load_battle_strip(fainted_path)
   self.state='title';self.party=new_party();self.room='gate';self.prev=None;self.px,self.py=320,220;self.facing=0
   self.flags=set();self.open_locks=set();self.keys=0;self.gold=0;self.items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1}
   self.weapon=0;self.armor=0;self.steps=0;self.dialog=[];self.dindex=0;self.room_menu=0
@@ -158,8 +178,10 @@ class Game(ProgressionMixin):
   if pygame.joystick.get_count(): self.connect_controller(0)
   self.music_volume=.8;self.sfx_volume=.8
   self.options_test_sound=self.make_options_test_sound()
-  self.music_ready=False;self.battle_music_playing=False;self.bestiary_music_playing=False
+  self.music_ready=False;self.battle_music_playing=False;self.bestiary_music_playing=False;self.gameover_music_playing=False
   self.battle_music_path=resource_path('assets/audio/battle_theme_1.mp3')
+  self.gameover_music_path=resource_path('assets/audio/game_over.mp3')
+  self.gameover_elapsed=0.
   try:self.make_music()
   except (pygame.error,OSError):pass
   self.world=WorldCombat(self,ROOMS,LINKS,LOCKS,Enemy,LINKS_TECH)
@@ -225,6 +247,7 @@ class Game(ProgressionMixin):
   if self.options_test_sound:self.options_test_sound.play()
 
  def start_battle_music(self):
+  self.stop_gameover_music()
   if not self.music_ready:return
   self.bestiary_music_playing=False
   pygame.mixer.music.load(str(self.battle_music_path))
@@ -254,12 +277,27 @@ class Game(ProgressionMixin):
   pygame.mixer.music.stop()
   self.battle_music_playing=False
 
+ def start_gameover_music(self):
+  self.battle_music_playing=False;self.bestiary_music_playing=False
+  try:
+   if pygame.mixer.get_init() is None:pygame.mixer.init()
+   pygame.mixer.music.stop()
+   pygame.mixer.music.load(str(self.gameover_music_path))
+   pygame.mixer.music.set_volume(self.music_volume)
+   pygame.mixer.music.play()
+   self.gameover_music_playing=True
+  except (pygame.error,OSError):self.gameover_music_playing=False
+
+ def stop_gameover_music(self):
+  if not self.gameover_music_playing:return
+  pygame.mixer.music.stop();self.gameover_music_playing=False
+
  def set_app_state(self,state):
   self.app_state=state
   if hasattr(self,'title_screen'):self.title_screen.set_state(state)
 
  def enter_title(self):
-  self.stop_battle_music();self.state='title';self.set_app_state(TITLE)
+  self.stop_battle_music();self.stop_gameover_music();self.state='title';self.set_app_state(TITLE)
 
  def enter_gameplay(self):
   self.set_app_state(GAMEPLAY)
@@ -314,7 +352,7 @@ class Game(ProgressionMixin):
   self.toast='Game saved';self.toast_t=100
 
  def load(self,slot=None):
-  self.stop_battle_music()
+  self.stop_battle_music();self.stop_gameover_music()
   if slot is not None:self.active_save_slot=slot
   path=self.current_save_path()
   try:
@@ -352,7 +390,7 @@ class Game(ProgressionMixin):
    self.enter_title();self.toast='Save could not be read.';self.toast_t=600
 
  def new_game(self):
-  self.stop_battle_music()
+  self.stop_battle_music();self.stop_gameover_music()
   self.__dict__.update(room='gate',prev=None,px=320,py=220,flags=set(),open_locks=set(),keys=0,gold=0,items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1},weapon=0,armor=0,playtime=0,party=new_party(),state='field')
   self.enter_gameplay()
   self.init_progression();self.world.reset()
@@ -665,7 +703,8 @@ class Game(ProgressionMixin):
    if any(e.key=='drone' for e in self.enemies) or random.random()<.42:self.items['Potion']+=1;drop=' Potion found.'
    else:drop=''
    self.log=[f'Victory! {reward} gil in usable parts.{drop}'];self.log_wait=100;self.state='victory';return
-  if not any(h.alive() for h in self.party):self.stop_battle_music();self.state='gameover'
+  if not any(h.alive() for h in self.party):
+   self.stop_battle_music();self.gameover_elapsed=0.;self.state='gameover';self.start_gameover_music()
 
  def end_victory(self):
   if self.world.busy:return
@@ -748,7 +787,9 @@ class Game(ProgressionMixin):
    if e.key in (pygame.K_ESCAPE,pygame.K_x):self.state='menu'
    elif e.key in (pygame.K_LEFT,pygame.K_UP,pygame.K_a,pygame.K_w):self.manual_page=max(0,self.manual_page-1)
    elif e.key in (pygame.K_RIGHT,pygame.K_DOWN,pygame.K_d,pygame.K_s,pygame.K_z,pygame.K_RETURN):self.manual_page+=1
-  elif self.state=='gameover' and e.type==pygame.KEYDOWN:self.load() if self.current_save_path().exists() else self.new_game()
+  elif (self.state=='gameover' and e.type==pygame.KEYDOWN and
+        self.gameover_elapsed>=FADE_SECONDS):
+   self.load() if self.current_save_path().exists() else self.new_game()
   elif self.state=='ending' and e.type==pygame.KEYDOWN:self.dindex+=1
   return True
 
@@ -759,6 +800,7 @@ class Game(ProgressionMixin):
   if self.toast_t:self.toast_t-=1
   if self.state=='title':
    self.title_screen.update(seconds);return
+  if self.state=='gameover':self.gameover_elapsed+=seconds
   if self.state!='gameover':self.playtime+=dt/1000
   if self.state=='field':
    k=pygame.key.get_pressed();dx=(k[pygame.K_RIGHT] or k[pygame.K_d])-(k[pygame.K_LEFT] or k[pygame.K_a]);dy=(k[pygame.K_DOWN] or k[pygame.K_s])-(k[pygame.K_UP] or k[pygame.K_w])
@@ -829,6 +871,11 @@ class Game(ProgressionMixin):
  def draw_battle(self):
   self.world.draw_scene()
 
+ def draw_gameover(self):
+  self.world.draw_scene(False)
+  draw_defeat_screen(self.canvas,self.gameover_elapsed,
+                     self.world.draw_heroes_only,self.big)
+
  def draw_menu(self):
   panel(self.canvas,(8,25,304,148))
   label(self.canvas,'FIELD MENU',18,34,GOLD,scale=2)
@@ -858,7 +905,7 @@ class Game(ProgressionMixin):
   elif self.state=='menu':self.draw_room(False);self.draw_ui_overlay(self.draw_menu)
   elif self.state=='manual':self.draw_ui_fullscreen(self.draw_manual)
   elif self.state=='bag':self.draw_ui_fullscreen(self.draw_bag)
-  elif self.state=='gameover':self.draw_ui_fullscreen(lambda:(self.canvas.fill(INK),self.canvas.blit(text('THE CIRCUIT CLAIMED YOU',self.big,RED),(55,69)),self.canvas.blit(text('Press any key to restore the last save.',self.font),(71,104))))
+  elif self.state=='gameover':self.draw_gameover()
   elif self.state=='ending':
    if self.dindex<8:self.draw_ending()
    else:self.draw_ui_fullscreen(self.draw_ending)

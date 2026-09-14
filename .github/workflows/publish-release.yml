@@ -7,23 +7,31 @@ on:
       - main
     paths:
       - .github/workflows/publish-release.yml
-      - RELEASE_NOTES_v1.7-test6.md
+      - RELEASE_NOTES_v1.8.md
       - START_HERE.txt
       - build.sh
+      - ashen-circuit.spec
+      - game.py
+      - seamless.py
+      - defeat_screen.py
+      - battle_animations.py
+      - assets/audio/game_over.mp3
+      - assets/characters/battle/**
+      - tests/**
 
 permissions:
   contents: write
 
 concurrency:
-  group: publish-v1.7-test6
+  group: publish-v1.8
   cancel-in-progress: false
 
 jobs:
   build-and-release:
     runs-on: ubuntu-24.04
     env:
-      RELEASE_TAG: v1.7-test6
-      RELEASE_VERSION: 1.7-test6
+      RELEASE_TAG: v1.8
+      RELEASE_VERSION: 1.8
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -71,6 +79,13 @@ jobs:
           (cd dist && sha256sum --check SHA256SUMS-${RELEASE_VERSION}.txt)
           file dist/The_Ashen_Circuit-${RELEASE_VERSION}-x86_64.AppImage | grep -q 'static-pie linked'
 
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: The_Ashen_Circuit-${{ env.RELEASE_VERSION }}-x86_64.AppImage
+          path: dist/The_Ashen_Circuit-${{ env.RELEASE_VERSION }}-x86_64.AppImage
+          compression-level: 0
+
       - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,12 +99,12 @@ jobs:
           )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
-              --title "The Ashen Circuit v1.7-test6" \
-              --notes-file RELEASE_NOTES_v1.7-test6.md
+              --title "The Ashen Circuit v1.8" \
+              --notes-file RELEASE_NOTES_v1.8.md
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
             gh release create "$RELEASE_TAG" "${assets[@]}" \
               --target "$GITHUB_SHA" \
-              --title "The Ashen Circuit v1.7-test6" \
-              --notes-file RELEASE_NOTES_v1.7-test6.md
+              --title "The Ashen Circuit v1.8" \
+              --notes-file RELEASE_NOTES_v1.8.md
           fi

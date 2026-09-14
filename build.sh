@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-VERSION="${ASHEN_VERSION:-1.7-test6}"
+VERSION="${ASHEN_VERSION:-1.8}"
 export PYTHONPATH="$ROOT/vendor${PYTHONPATH:+:$PYTHONPATH}"
 cd "$ROOT"
 mkdir -p build dist AppDir
@@ -17,8 +17,10 @@ python3 -m PyInstaller --noconfirm --clean --onefile --windowed --name ashen-cir
   --add-data "assets/characters/party_combat_bodies_hd_v1.png:assets/characters" \
   --add-data "assets/characters/party_combat_arms_hd_v1.png:assets/characters" \
   "${animation_data[@]}" \
+  --add-data "assets/characters/battle:assets/characters/battle" \
   --add-data "assets/audio/battle_theme_1.mp3:assets/audio" \
   --add-data "assets/audio/menu_theme.mp3:assets/audio" \
+  --add-data "assets/audio/game_over.mp3:assets/audio" \
   game.py
 mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
 cp dist/ashen-circuit AppDir/usr/bin/ashen-circuit
