@@ -6,9 +6,11 @@ from seamless import WorldCombat
 from pixel_ui import label, panel
 from progression import (ProgressionMixin, ARTS, LINKS_TECH, COSTS, CONSUMABLES,
                          ALL_TOMES, STATS, make_treasure)
+from render_config import (ACTOR_CELL_H, ACTOR_CELL_W, ACTOR_GROUND_ANCHOR,
+                           DISPLAY_SCALE, UI_H, UI_W, VIEW_H, VIEW_W, WORLD_GRID)
 
-W,H,SCALE=320,180,4
-TILE=16
+W,H,SCALE=VIEW_W,VIEW_H,DISPLAY_SCALE
+TILE=WORLD_GRID
 FPS=60
 SAVE=Path(os.environ.get('XDG_DATA_HOME',str(Path.home()/'.local/share')))/'ashen-circuit/save.json'
 def resource_path(rel):
@@ -16,10 +18,9 @@ def resource_path(rel):
 
 INK=(14,16,27); WHITE=(234,230,211); BLUE=(43,76,112); STEEL=(57,67,79)
 CYAN=(75,211,214); GOLD=(232,175,66); RED=(201,66,73); GREEN=(76,177,101); PURPLE=(135,91,170)
-# One source pixel is always one native-canvas pixel. Character size belongs to
-# the authored sheet, never to a runtime scale multiplier.
-CHARACTER_SCALE=(1.0,1.0,1.0,1.0)
-FOLLOWER_DX,FOLLOWER_DY=22,10
+# Grid spacing is shared by collision and both character render loops. There is
+# deliberately no character scale table: source pixels are always blitted 1:1.
+FOLLOWER_DX,FOLLOWER_DY=WORLD_GRID,WORLD_GRID//2
 
 def clamp(v,a,b): return max(a,min(b,v))
 def text(s,font,color=WHITE): return font.render(str(s),False,color)
@@ -109,12 +110,13 @@ class Game(ProgressionMixin):
  def __init__(self):
   pygame.mixer.pre_init(48000,-16,2,512); pygame.init()
   self.full=False; self.screen=pygame.display.set_mode((W*SCALE,H*SCALE));pygame.display.set_caption('The Ashen Circuit')
-  self.canvas=pygame.Surface((W,H)); self.clock=pygame.time.Clock()
+  self.canvas=pygame.Surface((W,H));self.ui_canvas=pygame.Surface((UI_W,UI_H),pygame.SRCALPHA);self.clock=pygame.time.Clock()
   self.font=pygame.font.Font(None,12);self.small=pygame.font.Font(None,10);self.tiny=pygame.font.Font(None,9);self.big=pygame.font.Font(None,22)
-  self.party_sheet=pygame.image.load(str(resource_path('assets/characters/party_motion_v1.png'))).convert_alpha()
-  self.combat_body_sheet=pygame.image.load(str(resource_path('assets/characters/party_combat_bodies_v2.png'))).convert_alpha()
-  self.combat_arm_sheet=pygame.image.load(str(resource_path('assets/characters/party_combat_arms_v2.png'))).convert_alpha()
-  self.state='title';self.party=new_party();self.room='gate';self.prev=None;self.px,self.py=160,110;self.facing=0
+  self.party_sheet=pygame.image.load(str(resource_path('assets/characters/party_overworld_hd_v2.png'))).convert_alpha()
+  self.battle_ready_sheet=pygame.image.load(str(resource_path('assets/characters/party_battle_ready_hd_v1.png'))).convert_alpha()
+  self.combat_body_sheet=pygame.image.load(str(resource_path('assets/characters/party_combat_bodies_hd_v1.png'))).convert_alpha()
+  self.combat_arm_sheet=pygame.image.load(str(resource_path('assets/characters/party_combat_arms_hd_v1.png'))).convert_alpha()
+  self.state='title';self.party=new_party();self.room='gate';self.prev=None;self.px,self.py=320,220;self.facing=0
   self.flags=set();self.open_locks=set();self.keys=0;self.gold=0;self.items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1}
   self.weapon=0;self.armor=0;self.steps=0;self.dialog=[];self.dindex=0;self.room_menu=0
   self.battle_mode='Active'
@@ -122,7 +124,7 @@ class Game(ProgressionMixin):
   self.manual_page=0;self.manual_type='party'
   self.treasure=make_treasure(ROOMS);self.init_progression()
   self.playtime=0;self.last_tick=pygame.time.get_ticks();self.toast='';self.toast_t=0;self.shake=0;self.moving=False
-  self.stars=[(random.randrange(W),random.randrange(H),random.choice([1,1,2])) for _ in range(80)]
+  self.stars=[(random.randrange(UI_W),random.randrange(UI_H),random.choice([1,1,2])) for _ in range(80)]
   self.joy=None;self.axis_latch=[0,0];self.pad_buttons=set()
   if pygame.joystick.get_count(): self.connect_controller(0)
   self.music_ready=False;self.battle_music_playing=False
@@ -163,14 +165,14 @@ class Game(ProgressionMixin):
    'party':[{'hp':h.hp,'mp':h.mp,'gauge':h.gauge,'buffs':h.buffs,
              'stats':{stat:getattr(h,stat) for stat in STATS}} for h in self.party],
    'learned_tomes':sorted(self.learned),'opened_chests':sorted(self.opened_chests),
-   'cleared_encounters':sorted(self.world.cleared),'save_version':3}
+   'cleared_encounters':sorted(self.world.cleared),'save_version':4}
   temporary=SAVE.with_suffix('.tmp');temporary.write_text(json.dumps(data));temporary.replace(SAVE)
   self.toast='Game saved';self.toast_t=100
 
  def load(self):
   self.stop_battle_music()
   try:
-   d=json.loads(SAVE.read_text());self.room=d['room'];self.prev=d.get('prev');self.px=d.get('px',160);self.py=d.get('py',110)
+   d=json.loads(SAVE.read_text());self.room=d['room'];self.prev=d.get('prev');self.px=d.get('px',320);self.py=d.get('py',220)
    self.flags=set(d['flags']);self.open_locks={tuple(x) for x in d['locks']};self.keys=d['keys'];self.gold=d['gold'];self.items=d['items'];self.weapon=d['weapon'];self.armor=d['armor'];self.playtime=d['playtime']
    self.battle_mode=d.get('battle_mode','Active') if d.get('battle_mode','Active') in ('Active','Wait') else 'Active'
    self.party=new_party();self.init_progression()
@@ -186,6 +188,9 @@ class Game(ProgressionMixin):
     if not backup.exists():backup.write_bytes(SAVE.read_bytes())
     self.open_locks &= LOCKS
     self.keys=min(self.keys,max(0,len(self.flags & set(RELAY_ROOM))-len(self.open_locks)))
+   if d.get('save_version',1)<4:
+    # v1.5 and older used the 320x180 placeholder coordinate space.
+    self.px*=2;self.py*=2
    self.world.cleared=set(d.get('cleared_encounters',[]));self.world.arrive()
    self.state='field';self.toast='Save loaded';self.toast_t=120
   except (ValueError,KeyError,OSError,TypeError) as error:
@@ -194,7 +199,7 @@ class Game(ProgressionMixin):
 
  def new_game(self):
   self.stop_battle_music()
-  self.__dict__.update(room='gate',prev=None,px=160,py=110,flags=set(),open_locks=set(),keys=0,gold=0,items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1},weapon=0,armor=0,playtime=0,party=new_party(),state='field')
+  self.__dict__.update(room='gate',prev=None,px=320,py=220,flags=set(),open_locks=set(),keys=0,gold=0,items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1},weapon=0,armor=0,playtime=0,party=new_party(),state='field')
   self.init_progression();self.world.reset()
   self.start_dialog(STORY['gate']+[('RIAN','Four training caches by the entrance. Take the tomes before we meet the patrols.'),('SYSTEM','Approach a chest and press A / Z. Tomes teach techniques; stat items are assigned in Items & Growth.')]);self.flags.add('seen_gate')
 
@@ -601,20 +606,27 @@ class Game(ProgressionMixin):
    self.moving=bool(dx or dy)
    if self.moving:
     length=math.hypot(dx,dy) or 1
-    self.move(dx/length*60*seconds,dy/length*60*seconds)
+    self.move(dx/length*120*seconds,dy/length*120*seconds)
   self.world.update(seconds)
 
  def box(self,x,y,w,h,fill=(21,27,46)):
   pygame.draw.rect(self.canvas,INK,(x-2,y-2,w+4,h+4));pygame.draw.rect(self.canvas,WHITE,(x-1,y-1,w+2,h+2),1);pygame.draw.rect(self.canvas,fill,(x,y,w,h))
 
- def draw_party_member(self,index,x,y,direction=0,frame=1):
-  # Sheet directions are down, left, right, up; field facing uses up/right/down/left.
+ def draw_party_member(self,index,x,y,direction=0,frame=0):
+  # Authored walk frames use the same native 96x96 cell contract as combat.
   img=self.party_sheet.subsurface(self.party_source_rect(index,direction,frame))
-  self.canvas.blit(img,(int(x-16),int(y-48)))
+  self.canvas.blit(img,(round(x-ACTOR_GROUND_ANCHOR[0]),
+                        round(y-ACTOR_GROUND_ANCHOR[1])))
 
- def party_source_rect(self,index,direction=0,frame=1):
+ def party_source_rect(self,index,direction=0,frame=0):
   sheet_dir={0:3,1:2,2:0,3:1}.get(direction,direction)
-  return pygame.Rect((sheet_dir*8+frame%8)*32,index*48,32,48)
+  return pygame.Rect((sheet_dir*8+frame%8)*ACTOR_CELL_W,
+                     index*ACTOR_CELL_H,ACTOR_CELL_W,ACTOR_CELL_H)
+
+ def battle_ready_source_rect(self,index,direction=0):
+  sheet_dir={0:3,1:2,2:0,3:1}.get(direction,direction)
+  return pygame.Rect(sheet_dir*ACTOR_CELL_W,index*ACTOR_CELL_H,
+                     ACTOR_CELL_W,ACTOR_CELL_H)
 
 
  def draw_title(self):
@@ -629,8 +641,19 @@ class Game(ProgressionMixin):
   if SAVE.exists():self.canvas.blit(text('N / Xbox Y  New Game',self.small),(113,158))
   if self.toast_t:label(self.canvas,self.toast,8,171,CYAN,limit=75)
 
- def draw_room(self):
-  self.world.draw_scene()
+ def draw_room(self,hud=True):
+  self.world.draw_scene(hud)
+
+ def draw_ui_overlay(self,draw):
+  """Render the established pixel UI separately from native world sprites."""
+  target=self.canvas;self.ui_canvas.fill((0,0,0,0));self.canvas=self.ui_canvas
+  try:draw()
+  finally:self.canvas=target
+  target.blit(pygame.transform.scale(self.ui_canvas,(W,H)),(0,0))
+
+ def draw_ui_fullscreen(self,draw):
+  self.canvas.fill(INK)
+  self.draw_ui_overlay(draw)
 
  def wrap(self,s,maxchars=48):
   out=[];line=''
@@ -641,17 +664,19 @@ class Game(ProgressionMixin):
   return out
 
  def draw_dialog(self):
-  self.draw_room();name,line=self.dialog[min(self.dindex,len(self.dialog)-1)]
-  panel(self.canvas,(4,112,312,65))
-  label(self.canvas,name,11,118,GOLD)
-  for i,l in enumerate(self.wrap(line,49)):label(self.canvas,l,11,130+i*10,WHITE)
-  label(self.canvas,'A: NEXT',265,167,CYAN)
+  self.draw_room(False)
+  def overlay():
+   name,line=self.dialog[min(self.dindex,len(self.dialog)-1)]
+   panel(self.canvas,(4,112,312,65));label(self.canvas,name,11,118,GOLD)
+   for i,l in enumerate(self.wrap(line,49)):label(self.canvas,l,11,130+i*10,WHITE)
+   label(self.canvas,'A: NEXT',265,167,CYAN)
+  self.draw_ui_overlay(overlay)
 
  def draw_battle(self):
   self.world.draw_scene()
 
  def draw_menu(self):
-  self.draw_room();panel(self.canvas,(8,25,304,148))
+  panel(self.canvas,(8,25,304,148))
   label(self.canvas,'FIELD MENU',18,34,GOLD,scale=2)
   opts=self.menu_options()
   for i,o in enumerate(opts):label(self.canvas,('> ' if i==self.room_menu else '  ')+o,18,56+i*14,GOLD if i==self.room_menu else WHITE)
@@ -672,15 +697,17 @@ class Game(ProgressionMixin):
    self.canvas.fill((7,8,15));self.canvas.blit(text('THE ASHEN CIRCUIT',self.big,GOLD),(79,48));self.canvas.blit(text('The weapon fired. The dragon fell.',self.font),(84,79));self.canvas.blit(text('But this was only the first shot of the coming war.',self.small),(63,96));self.canvas.blit(text(f'Completion time  {int(self.playtime//60)}m {int(self.playtime%60)}s',self.font,CYAN),(92,122));self.canvas.blit(text('Thank you for playing.',self.font),(105,145))
 
  def draw(self):
-  if self.state=='title':self.draw_title()
+  if self.state=='title':self.draw_ui_fullscreen(self.draw_title)
   elif self.state=='field':self.draw_room()
   elif self.state=='dialog':self.draw_dialog()
   elif self.state in ('battle','victory'):self.draw_battle()
-  elif self.state=='menu':self.draw_menu()
-  elif self.state=='manual':self.draw_manual()
-  elif self.state=='bag':self.draw_bag()
-  elif self.state=='gameover':self.canvas.fill(INK);self.canvas.blit(text('THE CIRCUIT CLAIMED YOU',self.big,RED),(55,69));self.canvas.blit(text('Press any key to restore the last save.',self.font),(71,104))
-  elif self.state=='ending':self.draw_ending()
+  elif self.state=='menu':self.draw_room(False);self.draw_ui_overlay(self.draw_menu)
+  elif self.state=='manual':self.draw_ui_fullscreen(self.draw_manual)
+  elif self.state=='bag':self.draw_ui_fullscreen(self.draw_bag)
+  elif self.state=='gameover':self.draw_ui_fullscreen(lambda:(self.canvas.fill(INK),self.canvas.blit(text('THE CIRCUIT CLAIMED YOU',self.big,RED),(55,69)),self.canvas.blit(text('Press any key to restore the last save.',self.font),(71,104))))
+  elif self.state=='ending':
+   if self.dindex<8:self.draw_ending()
+   else:self.draw_ui_fullscreen(self.draw_ending)
   size=self.screen.get_size();scaled=pygame.transform.scale(self.canvas,(min(size[0],size[1]*16//9),min(size[1],size[0]*9//16)));self.screen.fill((0,0,0));self.screen.blit(scaled,((size[0]-scaled.get_width())//2,(size[1]-scaled.get_height())//2));pygame.display.flip()
 
  def run(self):

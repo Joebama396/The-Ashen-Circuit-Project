@@ -10,6 +10,9 @@ import pygame
 from combat_poses import (HERO_COMBAT_PROFILES, RIAN_PROFILE, MAREK_PROFILE,
                           TESS_PROFILE, BRANN_PROFILE, CombatSpriteRig)
 from pixel_ui import label, panel
+from render_config import (ACTOR_CELL_H, ACTOR_CELL_W, ACTOR_GROUND_ANCHOR,
+                           FORMATION_X, FORMATION_Y, GRID_X, GRID_Y, HALF_GRID, VIEW_H, VIEW_W,
+                           WALK_BOUNDS, WORLD_GRID)
 
 WHITE=(235,231,218)
 CYAN=(78,211,219)
@@ -58,6 +61,7 @@ class Pawn:
     body_source_rect: object = None
     rear_arm_source_rect: object = None
     front_arm_source_rect: object = None
+    weapon_source_rect: object = None
 
     @property
     def pos(self):
@@ -89,6 +93,7 @@ class WorldCombat:
         self.enemy_factory=enemy_factory
         self.link_tech=link_tech
         self.combat_rig=CombatSpriteRig(game.combat_body_sheet,game.combat_arm_sheet)
+        self.battle_ready_sheet=game.battle_ready_sheet
         # Kept as public aliases for sprite/debug tooling. Rendering ownership
         # lives in CombatSpriteRig rather than the world/body draw loop.
         self.arm_sheet=self.combat_rig.arm_sheet
@@ -141,6 +146,7 @@ class WorldCombat:
         if p.hero>=0:
             p.rear_arm_source_rect=self.combat_rig.arm_rect(p.hero,state,'rear')
             p.front_arm_source_rect=self.combat_rig.arm_rect(p.hero,state,'front')
+            p.weapon_source_rect=self.combat_rig.arm_rect(p.hero,state,'weapon')
 
     def set_walk_animation(self,p):
         self.set_animation(p,MOVING_STATES[p.direction] if p.moving else 'idle')
@@ -151,16 +157,24 @@ class WorldCombat:
             state=state or p.profile.idle_state
             key=('hero',p.hero,state)
             if key not in self._collision_masks:
-                union=pygame.mask.Mask((64,64))
+                union=pygame.mask.Mask((ACTOR_CELL_W,ACTOR_CELL_H))
+                if state==p.profile.idle_state:
+                    for direction in range(4):
+                        image=self.battle_ready_sheet.subsurface(
+                            self.g.battle_ready_source_rect(p.hero,direction))
+                        union.draw(pygame.mask.from_surface(image),(0,0))
+                # Reserve the decoupled rig too: actors may enter an attack
+                # frame immediately after standing in a directional ready pose.
                 for facing_right in (False,True):
-                    image=pygame.Surface((64,64),pygame.SRCALPHA)
-                    self.combat_rig.draw(image,p.hero,state,32,58,facing_right)
+                    image=pygame.Surface((ACTOR_CELL_W,ACTOR_CELL_H),pygame.SRCALPHA)
+                    self.combat_rig.draw(image,p.hero,state,*ACTOR_GROUND_ANCHOR,
+                                         facing_right)
                     union.draw(pygame.mask.from_surface(image),(0,0))
                 padded=pygame.mask.Mask(union.get_size())
                 for dx,dy in itertools.product((-1,0,1),repeat=2):
                     padded.draw(union,(dx,dy))
                 union=padded
-                self._collision_masks[key]=(union,(32,58))
+                self._collision_masks[key]=(union,ACTOR_GROUND_ANCHOR)
             return self._collision_masks[key]
         key=('enemy',p.unit.key)
         if key not in self._collision_masks:
@@ -179,24 +193,27 @@ class WorldCombat:
 
     def exits(self):
         destinations=self.links[self.g.room]
-        points=[(160,49),(305,96),(160,147),(15,96)]
+        points=[(320,96),(608,192),(320,288),(32,192)]
         if len(destinations)>4:
-            points[0]=(108,49)
-            points.append((220,49))
+            points[0]=(192,96)
+            points.append((448,96))
         return list(zip(destinations, points))
 
     def blockers(self):
         # Only the feet collide; the tall machinery is depth-sorted at its base.
-        return [pygame.Rect(28,101,22,14), pygame.Rect(270,101,22,14)]
+        return [pygame.Rect(48,192,48,20),pygame.Rect(544,192,48,20)]
 
     def walkable(self, p):
-        return 12<=p[0]<=308 and 49<=p[1]<=148 and not any(
-            r.inflate(8,6).collidepoint(p) for r in self.blockers())
+        left,right,top,bottom=WALK_BOUNDS
+        return left<=p[0]<=right and top<=p[1]<=bottom and not any(
+            r.inflate(WORLD_GRID//8,WORLD_GRID//10).collidepoint(p)
+            for r in self.blockers())
 
     def clamp_point(self, p):
-        x,y=max(18,min(302,p[0])),max(57,min(144,p[1]))
+        left,right,top,bottom=WALK_BOUNDS
+        x,y=max(left,min(right,p[0])),max(top,min(bottom,p[1]))
         if not self.walkable((x,y)):
-            x=62 if x<160 else 258
+            x=WORLD_GRID+HALF_GRID if x<VIEW_W//2 else VIEW_W-WORLD_GRID-HALF_GRID
         return x,y
 
     def arrive(self, previous=None, repopulate=False):
@@ -213,17 +230,19 @@ class WorldCombat:
         self.floaters=[]
         self.grace=1.1
         if previous is not None:
-            door=next((p for dest,p in self.exits() if dest==previous), (160,147))
-            length=distance(door,(160,100)) or 1
-            g.px,g.py=self.clamp_point((door[0]+(160-door[0])*19/length,
-                                        door[1]+(100-door[1])*19/length))
-            g.facing=facing(door,(160,100))
+            center=(VIEW_W//2,VIEW_H//2)
+            door=next((p for dest,p in self.exits() if dest==previous),(320,288))
+            length=distance(door,center) or 1
+            g.px,g.py=self.clamp_point((door[0]+(center[0]-door[0])*38/length,
+                                        door[1]+(center[1]-door[1])*38/length))
+            g.facing=facing(door,center)
         # Preserve the familiar four-person trail, but keep everyone on-screen.
         self.heroes=[]
         trail_x=-1 if g.px>=130 else 1
         trail_y=-1 if g.py>110 else 1
         for i,h in enumerate(g.party):
-            p=self.clamp_point((g.px+trail_x*i*22, g.py+trail_y*i*10))
+            p=self.clamp_point((g.px+trail_x*i*WORLD_GRID,
+                                g.py+trail_y*i*(WORLD_GRID//2)))
             self.heroes.append(Pawn(h,*p,i,g.facing,home=p,goal=p,
                                     profile=HERO_COMBAT_PROFILES[i]))
         self.path=[p.pos for p in reversed(self.heroes)]
@@ -235,11 +254,11 @@ class WorldCombat:
             return
         if g.room=='bridge':
             if 'vael_down' not in g.flags:
-                self.patrols=[Patrol(uid,[self.make_enemy('vael',(175,89))],'vael')]
+                self.patrols=[Patrol(uid,[self.make_enemy('vael',(352,176))],'vael')]
             return
         if g.room=='cradle':
             if 'dragon_down' not in g.flags:
-                self.patrols=[Patrol(uid,[self.make_enemy('dragon',(170,99))],'dragon')]
+                self.patrols=[Patrol(uid,[self.make_enemy('dragon',(352,192))],'dragon')]
             return
         formations={
             'intake': ('scout','drone'), 'lift': ('mite','drone'),
@@ -253,9 +272,9 @@ class WorldCombat:
             'brig': ('guard','drone'), 'shaft': ('mite','wisp','drone'),
             'ante': ('soldier','golem'),
         }
-        layouts=[[(150,86),(205,111),(104,119)],
-                 [(117,85),(197,109),(231,75)],
-                 [(181,75),(127,111),(222,121)]]
+        layouts=[[(320,160),(448,224),(224,240)],
+                 [(256,160),(416,224),(480,144)],
+                 [(352,144),(256,224),(448,240)]]
         variant=list(self.rooms).index(g.room)%len(layouts)
         pawns=[self.make_enemy(k,p) for k,p in zip(formations.get(g.room,('drone',)),layouts[variant])]
         self.patrols=[Patrol(uid,pawns)]
@@ -273,10 +292,12 @@ class WorldCombat:
         if self.walkable(proposed):g.py=proposed[1]
         if dx or dy:g.facing=facing((0,0),(dx,dy))
         for dest,p in self.exits():
-            if distance((g.px,g.py),p)<7:
+            if distance((g.px,g.py),p)<14:
                 # Retreat from a blocked/locked doorway before showing dialogue.
-                norm=distance(p,(160,100)) or 1
-                retreat=(p[0]+(160-p[0])*11/norm,p[1]+(100-p[1])*11/norm)
+                center=(VIEW_W//2,VIEW_H//2)
+                norm=distance(p,center) or 1
+                retreat=(p[0]+(center[0]-p[0])*22/norm,
+                         p[1]+(center[1]-p[1])*22/norm)
                 g.px,g.py=retreat
                 g.transition(dest)
                 return
@@ -298,8 +319,8 @@ class WorldCombat:
                 for a,b in zip(reversed(self.path[:-1]),reversed(self.path[1:])):
                     walked+=distance(a,b)
                     goal=a
-                    if walked>=i*22:break
-                p.step(self.clamp_point(goal),74*dt)
+                    if walked>=i*WORLD_GRID:break
+                p.step(self.clamp_point(goal),120*dt)
             else:p.moving=False
         for p in self.heroes:self.set_walk_animation(p)
         if self.grace>0:self.grace=max(0,self.grace-dt)
@@ -308,11 +329,11 @@ class WorldCombat:
                 old=p.pos
                 if not patrol.boss:
                     phase=self.clock*.55+i*2+list(self.rooms).index(g.room)
-                    p.x=p.home[0]+math.sin(phase)*7
-                    p.y=p.home[1]+math.sin(phase*.8)*3
+                    p.x=p.home[0]+math.sin(phase)*14
+                    p.y=p.home[1]+math.sin(phase*.8)*6
                     if distance(old,p.pos)>.01:p.direction=facing(old,p.pos)
                     p.moving=True
-                radius=21 if patrol.boss=='dragon' else 13
+                radius=42 if patrol.boss=='dragon' else 26
                 if not self.grace and distance(leader.pos,p.pos)<radius:
                     self.contact=patrol
                     if patrol.boss=='dragon' and 'pre_dragon' not in g.flags:
@@ -328,7 +349,7 @@ class WorldCombat:
             self.active=next((p for p in self.patrols if p.boss==boss and
                               [x.unit.key for x in p.pawns]==list(keys)),None)
         if self.active is None:
-            points=[(155,87),(211,110),(103,118),(230,72)]
+            points=[(320,160),(448,224),(224,240),(480,144)]
             self.active=Patrol(f'{g.room}:0',[self.make_enemy(k,p) for k,p in zip(keys,points)],boss)
             self.patrols.append(self.active)
         self.pending_boss=None
@@ -353,19 +374,20 @@ class WorldCombat:
         enemies=self.active.pawns
         cx=sum(p.x for p in enemies)/len(enemies)
         cy=sum(p.y for p in enemies)/len(enemies)
-        # Candidate feet positions use native canvas pixels. Combat art is never
-        # enlarged to fill a slot: entering battle swaps the exploration frame
-        # for a 64x64 combat rig at the same 1:1 pixel ratio.
-        candidates=[(x,y) for y in (58,75,92,109,126)
-                    for x in range(64,257,16)]
+        # Every candidate derives from the shared 64-pixel world grid. The
+        # 96x96 atlas cell is only transparent clearance around raw 64x80 art.
+        candidates=[(x,y) for y in FORMATION_Y for x in FORMATION_X]
+        # Machinery is depth-sorted scenery; only other actors reserve combat
+        # cells. Foot collision still prevents exploration from walking through
+        # the machine bases.
         static=[]
-        for rect in (pygame.Rect(24,61,31,55),pygame.Rect(266,61,31,55)):
-            static.append((pygame.mask.Mask(rect.size,fill=True),rect.topleft))
         for p in enemies:
             mask,anchor=self.collision_mask(p)
             static.append((mask,(round(p.x-anchor[0]),round(p.y-anchor[1]))))
-        ideals=[(min(p.x for p in enemies)-45,cy+8),
-                (max(p.x for p in enemies)+55,cy-18),(cx-8,cy-44),(cx+15,cy+47)]
+        ideals=[(min(p.x for p in enemies)-WORLD_GRID,cy),
+                (max(p.x for p in enemies)+WORLD_GRID,cy),
+                (cx-WORLD_GRID//2,cy-WORLD_GRID//2),
+                (cx+WORLD_GRID//2,cy+WORLD_GRID//2)]
         candidates=[q for q in candidates if self.walkable(q)]
 
         def mask_overlap(mask,origin,other,other_origin):
@@ -741,76 +763,74 @@ class WorldCombat:
         s=self.g.canvas
         base,tile,edge,glow=self.palette()
         s.fill(base)
-        pygame.draw.rect(s,(15,22,29),(0,17,320,25))
-        for x in range(0,320,32):
-            pygame.draw.rect(s,tile,(x+1,21,30,13))
-            pygame.draw.line(s,edge,(x+3,21),(x+27,21))
-        pygame.draw.rect(s,(10,17,22),(0,36,320,5))
-        pygame.draw.line(s,edge,(0,41),(320,41),2)
-        for y in range(43,180,16):
-            for x in range(0,320,16):
-                c=tuple(v+((x//16+y//16)%2)*3 for v in tile)
-                pygame.draw.rect(s,c,(x,y,15,15))
-                pygame.draw.line(s,base,(x,y+14),(x+14,y+14))
-                pygame.draw.rect(s,edge,(x+2,y+2,1,1))
-        # Recessed cable channels: exactly the same room geometry in both modes.
-        for x in (58,258):
-            pygame.draw.rect(s,(20,28,33),(x,42,4,132))
-            pygame.draw.line(s,edge,(x+1,42),(x+1,174))
-        pygame.draw.rect(s,(19,27,32),(62,153,197,4))
+        pygame.draw.rect(s,(15,22,29),(0,34,VIEW_W,50))
+        for x in range(0,VIEW_W,WORLD_GRID):
+            pygame.draw.rect(s,tile,(x+2,42,WORLD_GRID-4,26))
+            pygame.draw.line(s,edge,(x+6,42),(x+WORLD_GRID-6,42),2)
+        pygame.draw.rect(s,(10,17,22),(0,72,VIEW_W,10))
+        pygame.draw.line(s,edge,(0,82),(VIEW_W,82),4)
+        # The placeholder room itself now exposes the same 64-pixel grid used
+        # by collision and tactical placement.
+        for y in range(96,VIEW_H,WORLD_GRID):
+            for x in range(0,VIEW_W,WORLD_GRID):
+                c=tuple(v+((x//WORLD_GRID+y//WORLD_GRID)%2)*3 for v in tile)
+                pygame.draw.rect(s,c,(x+2,y+2,WORLD_GRID-4,WORLD_GRID-4))
+                pygame.draw.line(s,base,(x+2,y+WORLD_GRID-3),
+                                 (x+WORLD_GRID-3,y+WORLD_GRID-3),2)
+                pygame.draw.rect(s,edge,(x+8,y+8,3,3))
+        for x in (116,516):
+            pygame.draw.rect(s,(20,28,33),(x,84,8,264))
+            pygame.draw.line(s,edge,(x+2,84),(x+2,348),2)
+        pygame.draw.rect(s,(19,27,32),(124,306,394,8))
         active=len(self.g.flags & {'relay_a','relay_b','relay_c'})<3
         pulse=glow if active else (77,123,112)
-        for x in range(65,258,16):
-            pygame.draw.rect(s,pulse,(x,154,6,1))
+        for x in range(130,516,32):pygame.draw.rect(s,pulse,(x,308,12,2))
         # Room-specific insets remain visible throughout encounters.
         variant=list(self.rooms).index(self.g.room)
         if self.g.room in ('reservoir','pumps'):
-            for x in range(74,252,12):
-                y=159+int(math.sin(x*.1+self.clock)*2)
-                pygame.draw.line(s,(60,115,127),(x,y),(x+7,y))
+            for x in range(148,504,24):
+                y=318+int(math.sin(x*.05+self.clock)*4)
+                pygame.draw.line(s,(60,115,127),(x,y),(x+14,y),2)
         elif self.g.room in ('foundry','furnace','north_hall'):
-            for x in (87,233):
-                pygame.draw.rect(s,(27,30,32),(x,45,3,94))
-                for y in range(48,135,9):pygame.draw.line(s,edge,(x-3,y),(x+6,y))
+            for x in (174,466):
+                pygame.draw.rect(s,(27,30,32),(x,90,6,188))
+                for y in range(96,270,18):pygame.draw.line(s,edge,(x-6,y),(x+12,y),2)
         elif self.g.room in ('archive','vault'):
-            for x in range(77,247,18):
-                pygame.draw.rect(s,(25,25,37),(x,46,12,5))
-                pygame.draw.rect(s,PURPLE,(x+3,47,5,1))
+            for x in range(154,494,36):
+                pygame.draw.rect(s,(25,25,37),(x,92,24,10))
+                pygame.draw.rect(s,PURPLE,(x+6,94,10,2))
         if self.g.room.startswith('relay_') or self.g.room=='nexus':
-            pygame.draw.ellipse(s,base,(123,72,76,40),3)
-            pygame.draw.ellipse(s,edge,(128,76,66,31),1)
-            pygame.draw.circle(s,pulse,(161,92),5,1)
+            pygame.draw.ellipse(s,base,(246,144,152,80),6)
+            pygame.draw.ellipse(s,edge,(256,152,132,62),2)
+            pygame.draw.circle(s,pulse,(322,184),10,2)
         else:
             for n in range(3):
-                x=81+(variant*23+n*61)%160
-                y=56+(variant*11+n*37)%82
-                pygame.draw.line(s,base,(x,y),(x+8,y+2))
-                pygame.draw.line(s,edge,(x+3,y+3),(x+7,y+3))
+                x=162+(variant*46+n*122)%320
+                y=112+(variant*22+n*74)%164
+                pygame.draw.line(s,base,(x,y),(x+16,y+4),2)
+                pygame.draw.line(s,edge,(x+6,y+6),(x+14,y+6),2)
         for dest,(x,y) in self.exits():
             locked=tuple(sorted((self.g.room,dest))) in self.locks and tuple(sorted((self.g.room,dest))) not in self.g.open_locks
             col=RED if locked else GOLD
-            pygame.draw.rect(s,(13,21,27),(x-8,y-4,17,9))
-            pygame.draw.line(s,col,(x-6,y+3),(x+6,y+3),2)
-            if y==49:
-                pygame.draw.polygon(s,col,[(x-3,y),(x,y-3),(x+3,y)])
-            elif y==147:
-                pygame.draw.polygon(s,col,[(x-3,y-2),(x,y+1),(x+3,y-2)])
-            elif x<160:
-                pygame.draw.polygon(s,col,[(x+2,y-3),(x-1,y),(x+2,y+3)])
-            else:pygame.draw.polygon(s,col,[(x-2,y-3),(x+1,y),(x-2,y+3)])
+            pygame.draw.rect(s,(13,21,27),(x-16,y-8,34,18))
+            pygame.draw.line(s,col,(x-12,y+6),(x+12,y+6),4)
+            if y==96:pygame.draw.polygon(s,col,[(x-6,y),(x,y-6),(x+6,y)])
+            elif y==288:pygame.draw.polygon(s,col,[(x-6,y-4),(x,y+2),(x+6,y-4)])
+            elif x<VIEW_W//2:pygame.draw.polygon(s,col,[(x+4,y-6),(x-2,y),(x+4,y+6)])
+            else:pygame.draw.polygon(s,col,[(x-4,y-6),(x+2,y),(x-4,y+6)])
 
     def draw_machine(self, x):
         s=self.g.canvas
         base,tile,edge,glow=self.palette()
-        pygame.draw.ellipse(s,(17,22,27),(x-4,110,30,8))
-        pygame.draw.rect(s,(20,28,36),(x,70,22,44))
-        pygame.draw.rect(s,(75,86,92),(x,70,18,40))
-        pygame.draw.rect(s,(45,57,64),(x+2,73,14,32))
-        pygame.draw.polygon(s,(105,116,119),[(x,70),(x+5,64),(x+23,64),(x+18,70)])
-        pygame.draw.polygon(s,(32,41,48),[(x+18,70),(x+23,64),(x+23,106),(x+18,110)])
-        pygame.draw.rect(s,(15,26,33),(x+4,78,10,12))
-        pygame.draw.rect(s,glow,(x+6,81,6,4))
-        for y in (95,99,103):pygame.draw.line(s,(25,35,43),(x+4,y),(x+13,y))
+        pygame.draw.ellipse(s,(17,22,27),(x-8,220,60,16))
+        pygame.draw.rect(s,(20,28,36),(x,140,44,88))
+        pygame.draw.rect(s,(75,86,92),(x,140,36,80))
+        pygame.draw.rect(s,(45,57,64),(x+4,146,28,64))
+        pygame.draw.polygon(s,(105,116,119),[(x,140),(x+10,128),(x+46,128),(x+36,140)])
+        pygame.draw.polygon(s,(32,41,48),[(x+36,140),(x+46,128),(x+46,212),(x+36,220)])
+        pygame.draw.rect(s,(15,26,33),(x+8,156,20,24))
+        pygame.draw.rect(s,glow,(x+12,162,12,8))
+        for y in (190,198,206):pygame.draw.line(s,(25,35,43),(x+8,y),(x+26,y),2)
 
     def enemy_image(self, pawn):
         """Code-native pixel creatures, used unchanged on patrol and in combat."""
@@ -927,7 +947,9 @@ class WorldCombat:
         return p.body_source_rect
 
     def combat_arm_source_rect(self,p,layer):
-        cached=p.rear_arm_source_rect if layer=='rear' else p.front_arm_source_rect
+        cached={'rear':p.rear_arm_source_rect,
+                'front':p.front_arm_source_rect,
+                'weapon':p.weapon_source_rect}[layer]
         return cached or self.combat_rig.arm_rect(p.hero,p.animation_state,layer)
 
     def draw_combat_arm(self,p,layer,x,y):
@@ -938,29 +960,38 @@ class WorldCombat:
         self.combat_rig.draw_body(
             self.g.canvas,p.hero,x,y,p.direction==1)
 
+    def draw_battle_ready(self,p,x,y):
+        image=self.battle_ready_sheet.subsurface(
+            self.g.battle_ready_source_rect(p.hero,p.direction))
+        self.g.canvas.blit(image,(round(x-ACTOR_GROUND_ANCHOR[0]),
+                                  round(y-ACTOR_GROUND_ANCHOR[1])))
+
     def draw_pawn(self, p):
         g=self.g;s=g.canvas
         x,ground_y=int(p.x),int(p.y)
         y=ground_y-int(p.air)
-        pygame.draw.ellipse(s,(16,24,28),(x-11,ground_y-3,22,6))
+        pygame.draw.ellipse(s,(16,24,28),(x-20,ground_y-5,40,10))
         if p.hero>=0:
             if (g.state=='battle' and p.hero==g.turn_actor and
                 (not self.busy or self.enemy_action_active)):
-                pygame.draw.ellipse(s,ELEMENT_COLORS[p.hero],(x-12,ground_y-4,24,7),1)
-                pygame.draw.polygon(s,GOLD,[(x-3,y-58),(x+3,y-58),(x,y-55)])
+                pygame.draw.ellipse(s,ELEMENT_COLORS[p.hero],(x-22,ground_y-6,44,12),2)
+                pygame.draw.polygon(s,GOLD,[(x-5,y-92),(x+5,y-92),(x,y-86)])
             if p.unit.alive():
                 combat_rig=(g.state in ('battle','victory') and self.phase!='forming')
                 if combat_rig:
-                    # The rig owns slice selection and rear/body/front stitching;
-                    # the world renderer supplies only state, anchor and facing.
-                    self.combat_rig.draw(
-                        s,p.hero,p.animation_state,x,y,p.direction==1)
+                    if p.animation_state==p.profile.idle_state:
+                        self.draw_battle_ready(p,x,y)
+                    else:
+                        # Attack states retain the decoupled arm/body rig.
+                        self.combat_rig.draw(
+                            s,p.hero,p.animation_state,x,y,p.direction==1)
                 else:g.draw_party_member(p.hero,x,y,p.direction,p.animation_frame)
             else:
                 # A consistent prone pose, not an abruptly missing party member.
-                src=g.party_sheet.subsurface(pygame.Rect(4*32,p.hero*48,32,48))
-                img=pygame.transform.rotate(src,90)
-                img.set_alpha(130);s.blit(img,(x-24,ground_y-18))
+                src=g.party_sheet.subsurface(g.party_source_rect(p.hero,2,4)).copy()
+                src.set_alpha(130)
+                s.blit(src,(x-ACTOR_GROUND_ANCHOR[0],
+                            ground_y-ACTOR_GROUND_ANCHOR[1]))
         elif p.unit.alive():
             s.blit(self.enemy_image(p),(x-40,y-69))
             if g.state=='battle':
@@ -976,7 +1007,7 @@ class WorldCombat:
 
     def draw_scene(self, hud=True):
         self.draw_ground()
-        layers=[(115,lambda:self.draw_machine(28)),(115,lambda:self.draw_machine(270))]
+        layers=[(230,lambda:self.draw_machine(56)),(230,lambda:self.draw_machine(540))]
         for chest in self.g.treasure[self.g.room]:
             layers.append((chest.pos[1],lambda chest=chest:self.draw_chest(chest)))
         for patrol in self.patrols:
@@ -986,26 +1017,26 @@ class WorldCombat:
         for _,draw in sorted(layers,key=lambda item:item[0]):draw()
         self.draw_effects()
         if hud:
-            if self.g.state in ('battle','victory'):self.draw_battle_hud()
-            else:self.draw_field_hud()
+            draw=self.draw_battle_hud if self.g.state in ('battle','victory') else self.draw_field_hud
+            self.g.draw_ui_overlay(draw)
 
     def draw_chest(self, chest):
         s=self.g.canvas;x,y=chest.pos
         opened=chest.uid in self.g.opened_chests
         trim=MUTED if opened else CYAN if chest.tome else GOLD
-        pygame.draw.ellipse(s,(16,24,28),(x-9,y-2,20,5))
-        pygame.draw.rect(s,(14,22,29),(x-9,y-12,18,13))
-        pygame.draw.rect(s,(80,61,49),(x-7,y-10,14,9))
-        pygame.draw.rect(s,trim,(x-8,y-11,16,4),1)
-        pygame.draw.line(s,trim,(x-6,y-6),(x+6,y-6))
-        for dx in (-6,5):pygame.draw.line(s,trim,(x+dx,y-10),(x+dx,y-2))
+        pygame.draw.ellipse(s,(16,24,28),(x-18,y-4,40,10))
+        pygame.draw.rect(s,(14,22,29),(x-18,y-24,36,26))
+        pygame.draw.rect(s,(80,61,49),(x-14,y-20,28,18))
+        pygame.draw.rect(s,trim,(x-16,y-22,32,8),2)
+        pygame.draw.line(s,trim,(x-12,y-12),(x+12,y-12),2)
+        for dx in (-12,10):pygame.draw.line(s,trim,(x+dx,y-20),(x+dx,y-4),2)
         if opened:
-            pygame.draw.rect(s,(12,18,24),(x-6,y-9,12,4))
-            pygame.draw.rect(s,MUTED,(x-8,y-16,16,4),1)
+            pygame.draw.rect(s,(12,18,24),(x-12,y-18,24,8))
+            pygame.draw.rect(s,MUTED,(x-16,y-32,32,8),2)
         elif chest.tome:
-            pygame.draw.rect(s,(225,221,185),(x-2,y-11,5,4))
-            pygame.draw.line(s,(53,80,89),(x,y-11),(x,y-8))
-        else:pygame.draw.rect(s,GOLD,(x-1,y-7,3,3))
+            pygame.draw.rect(s,(225,221,185),(x-4,y-22,10,8))
+            pygame.draw.line(s,(53,80,89),(x,y-22),(x,y-16),2)
+        else:pygame.draw.rect(s,GOLD,(x-2,y-14,6,6))
 
     def draw_effects(self):
         s=self.g.canvas

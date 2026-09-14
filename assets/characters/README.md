@@ -1,8 +1,9 @@
 # Character Sprite Kit
 
-The seamless-combat build swaps between `party_motion_v1.png` for exploration
-and the two `party_combat_*_v1.png` layer atlases for battle. All runtime party
-frames are drawn at 1:1 native-canvas scale.
+The seamless-combat build swaps between `party_overworld_hd_v2.png` for
+exploration, `party_battle_ready_hd_v1.png` for directional battle idle poses,
+and the two `party_combat_*_hd_v1.png` layer atlases for attack states. All
+runtime party frames are drawn at 1:1 native-world-canvas scale.
 
 ## `party_overworld_v4.png`
 
@@ -30,16 +31,47 @@ or limb from leaking into an adjacent animation frame.
 This is the authored source for the runtime combat layer atlases. It is processed
 offline and is not resized by the running game.
 
-## `party_combat_bodies_v2.png` and `party_combat_arms_v2.png`
+## `party_combat_bodies_hd_v1.png` and `party_combat_arms_hd_v1.png`
 
-- Runtime frame: 64×64 transparent pixels
+- Runtime frame: 96×96 transparent pixels
+- Authored character inside each frame: unchanged 64×80 source pixels
 - Body atlas: four fixed torso/body frames
-- Arm atlas: separate rear/front rows and one column per named state
-- Shared ground anchor: `(32, 58)` in every frame
+- Part atlas: separate rear-arm, front-arm/hand, and weapon rows, with one
+  column per named state
+- Shared ground anchor: `(48, 88)` in every frame
 - Rendering: direct 1:1 source-rectangle blits only
 
 `tools/build_combat_layers.py` regenerates both atlases from the authored battle
-sheet using the locked blueprints in `combat_poses.py`.
+sheet using the locked blueprints in `combat_poses.py`. It never synthesizes or
+underpaints body pixels: every retained body pixel is copied byte-for-byte from
+the source silhouette. The packaged runtime never slices or masks.
+
+Brann's face/head cluster is permanently excluded from every movable part
+slice, so horizontal mirroring cannot hand those pixels to the launcher layer.
+Merek's high-ready forearms and weapon use a rearward, lowered 3/4 shoulder
+pivot while his head, collar, and chest stay in the fixed body frame.
+
+## `party_overworld_hd_v2.png`
+
+- Runtime frame: 96×96 transparent pixels
+- Rows: Rian, Merek, Tess, Brann
+- Direction groups: down, left, right, up
+- Eight frames per direction, repeating the approved four-frame cycle twice
+- Source cycle: idle, first stride, idle, opposite stride
+
+`tools/build_authored_stance_atlases.py` packs the approved directional walk
+strips from `stances/` without resizing any authored pixels.
+
+## `party_battle_ready_hd_v1.png`
+
+- Runtime frame: 96×96 transparent pixels
+- Rows: Rian, Merek, Tess, Brann
+- Direction columns: down, left, right, up
+- Shared ground anchor: `(48, 88)`
+
+These complete directional sprites are used for battle-ready idle states. The
+decoupled combat body/arm atlases remain active for attacks, recoil, and jump
+sequences.
 
 ## `party_battle_reference_v5.png`
 

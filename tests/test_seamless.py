@@ -13,6 +13,9 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT']='1'
 import pygame
 import game
 import combat_poses
+import render_config
+from tools.build_authored_stance_atlases import (build_battle_atlas,
+                                                  build_walk_atlas)
 from tools.build_combat_layers import generate_atlases
 
 
@@ -34,7 +37,7 @@ class SeamlessTests(unittest.TestCase):
 
     def field(self, room='foundry'):
         g=self.g
-        g.room=room;g.state='field';g.px,g.py=105,132
+        g.room=room;g.state='field';g.px,g.py=210,264
         g.world.arrive()
         return g
 
@@ -89,7 +92,7 @@ class SeamlessTests(unittest.TestCase):
     def test_contact_not_step_counter_starts_combat(self):
         g=self.field('intake');g.world.grace=0
         g.steps=100000
-        g.px,g.py=72,133
+        g.px,g.py=144,266
         for _ in range(20):g.world.update(1/60)
         self.assertEqual('field',g.state)
         p=g.world.patrols[0].pawns[0]
@@ -113,7 +116,7 @@ class SeamlessTests(unittest.TestCase):
                     self.assertGreater(max(p[0] for p in positions)-min(p[0] for p in positions),80)
                     for p in positions:
                         self.assertTrue(g.world.walkable(p))
-                        self.assertLessEqual(p[1],129)
+                        self.assertLessEqual(p[1],render_config.WALK_BOUNDS[3])
 
     def test_melee_moves_and_damage_happens_at_impact(self):
         g=self.battle()
@@ -133,13 +136,13 @@ class SeamlessTests(unittest.TestCase):
     def test_melee_uses_ground_rush_nearby_and_jump_attack_at_range(self):
         g=self.battle();hero=g.party[0];pawn=g.world.heroes[0]
         target=g.world.active.pawns[0]
-        target.x,target.y=220,90;target.home=target.pos
-        pawn.x,pawn.y=170,90;pawn.home=pawn.pos;hero.atb=100
+        target.x,target.y=440,192;target.home=target.pos
+        pawn.x,pawn.y=390,192;pawn.home=pawn.pos;hero.atb=100
         g.world.target=target.unit;g.world.queue_action(hero,'Attack')
         self.assertEqual(['run'],g.world.action['motions'])
         self.settle()
 
-        pawn.x,pawn.y=80,90;pawn.home=pawn.pos;hero.atb=100
+        pawn.x,pawn.y=160,192;pawn.home=pawn.pos;hero.atb=100
         target.unit.hp=target.unit.maxhp
         for e in g.enemies:e.atb=0
         g.world.target=target.unit;g.world.queue_action(hero,'Attack')
@@ -201,24 +204,26 @@ class SeamlessTests(unittest.TestCase):
     def test_arm_source_rects_change_without_swapping_the_body_rect(self):
         g=self.battle();pawn=g.world.heroes[0]
         body=g.world.combat_body_source_rect(pawn).copy()
-        idle=(g.world.combat_arm_source_rect(pawn,'rear').copy(),
-              g.world.combat_arm_source_rect(pawn,'front').copy())
-        self.assertNotEqual(idle[0],idle[1])
+        idle=tuple(g.world.combat_arm_source_rect(pawn,layer).copy()
+                   for layer in combat_poses.ARM_LAYERS)
+        self.assertEqual(3,len(set(tuple(rect) for rect in idle)))
         self.assertEqual(idle[0],pawn.rear_arm_source_rect)
         self.assertEqual(idle[1],pawn.front_arm_source_rect)
+        self.assertEqual(idle[2],pawn.weapon_source_rect)
         g.world.set_animation(pawn,'overhead_raise',0)
-        raised=(g.world.combat_arm_source_rect(pawn,'rear').copy(),
-                g.world.combat_arm_source_rect(pawn,'front').copy())
+        raised=tuple(g.world.combat_arm_source_rect(pawn,layer).copy()
+                     for layer in combat_poses.ARM_LAYERS)
         self.assertEqual(body,g.world.combat_body_source_rect(pawn))
         self.assertNotEqual(idle,raised)
         self.assertEqual(raised[0],pawn.rear_arm_source_rect)
         self.assertEqual(raised[1],pawn.front_arm_source_rect)
+        self.assertEqual(raised[2],pawn.weapon_source_rect)
 
     def test_every_named_arm_rect_contains_pixels_and_stays_inside_atlas(self):
         g=self.battle()
         for pawn in g.world.heroes:
             for state in combat_poses.HERO_POSES[pawn.hero]:
-                for layer in ('rear','front'):
+                for layer in combat_poses.ARM_LAYERS:
                     rect=combat_poses.arm_source_rect(pawn.hero,state,layer)
                     self.assertTrue(g.world.arm_sheet.get_rect().contains(rect))
                     cell=g.world.arm_sheet.subsurface(rect)
@@ -230,11 +235,6 @@ class SeamlessTests(unittest.TestCase):
                         self.assertEqual(0,arm_mask.overlap_area(
                             pygame.mask.Mask(edge.size,fill=True),edge.topleft))
 
-                    body_rect=combat_poses.body_source_rect(pawn.hero)
-                    body_mask=pygame.mask.from_surface(
-                        g.world.combat_body_sheet.subsurface(body_rect))
-                    self.assertGreater(arm_mask.overlap_area(
-                        body_mask,(0,0)),0)
 
     def test_combat_arm_pixels_are_sliced_from_the_authored_sprite_sheet(self):
         g=self.battle()
@@ -265,7 +265,7 @@ class SeamlessTests(unittest.TestCase):
 
     def test_runtime_character_renderer_is_strictly_one_to_one(self):
         g=self.battle();pawn=g.world.heroes[0]
-        self.assertEqual((1.,1.,1.,1.),game.CHARACTER_SCALE)
+        self.assertFalse(hasattr(game,'CHARACTER_SCALE'))
         with patch('pygame.transform.scale') as resize:
             g.canvas.fill((0,0,0,0));g.world.draw_pawn(pawn)
             self.assertFalse(resize.called)
@@ -278,6 +278,7 @@ class SeamlessTests(unittest.TestCase):
         self.assertNotIn('pygame.mask',source)
         self.assertNotIn('transform.scale',source)
         self.assertNotIn('transform.rotate',source)
+        self.assertEqual(('rear','front','weapon'),combat_poses.ARM_LAYERS)
         self.assertEqual('low_ready',combat_poses.LOCKED_STANCE_BLUEPRINTS['Brann']['idle'])
         self.assertEqual('high_ready',combat_poses.LOCKED_STANCE_BLUEPRINTS['Merek']['idle'])
         self.assertEqual('split-arm',combat_poses.LOCKED_STANCE_BLUEPRINTS['Tess']['idle'])
@@ -285,18 +286,81 @@ class SeamlessTests(unittest.TestCase):
             ('jump_start','overhead_raise','downward_landing_strike'),
             combat_poses.LOCKED_STANCE_BLUEPRINTS['Rian']['jump'])
 
+    def test_weapon_frames_have_their_own_source_rects(self):
+        g=self.battle()
+        for hero,states in combat_poses.HERO_POSES.items():
+            for state in states:
+                rects=[combat_poses.arm_source_rect(hero,state,layer)
+                       for layer in combat_poses.ARM_LAYERS]
+                self.assertEqual(len(rects),len(set(tuple(rect) for rect in rects)))
+                weapon=g.combat_arm_sheet.subsurface(rects[-1])
+                self.assertGreater(pygame.mask.from_surface(weapon).count(),0)
+
     def test_ready_pose_silhouettes_match_ranged_blueprints(self):
         g=self.battle()
         def arm_cell(hero,state,layer='front'):
             return g.combat_arm_sheet.subsurface(
                 combat_poses.arm_source_rect(hero,state,layer))
-        merek=arm_cell(1,'high_ready').get_bounding_rect()
+        merek=pygame.Surface((combat_poses.COMBAT_CELL_W,
+                              combat_poses.COMBAT_CELL_H),pygame.SRCALPHA)
+        for layer in combat_poses.ARM_LAYERS:
+            merek.blit(arm_cell(1,'high_ready',layer),(0,0))
+        merek=merek.get_bounding_rect()
         self.assertGreater(merek.height,merek.width)
         brann_low=pygame.mask.from_surface(arm_cell(3,'low_ready'))
         brann_fire=pygame.mask.from_surface(arm_cell(3,'shouldered_firing'))
         self.assertGreater(brann_low.centroid()[1],brann_fire.centroid()[1]+3)
         self.assertGreater(pygame.mask.from_surface(
             arm_cell(3,'low_ready','rear')).count(),0)
+
+    def test_body_atlas_never_contains_synthetic_or_resized_pixels(self):
+        source=pygame.image.load(str(game.resource_path(
+            'assets/characters/party_battle_v6.png'))).convert_alpha()
+        ox,oy=combat_poses.BODY_CELL_OFFSET
+        for hero in range(4):
+            authored=source.subsurface(pygame.Rect(hero*64,0,64,80))
+            body=self.g.combat_body_sheet.subsurface(
+                combat_poses.body_source_rect(hero))
+            for y in range(body.get_height()):
+                for x in range(body.get_width()):
+                    color=body.get_at((x,y))
+                    if not color.a:continue
+                    self.assertTrue(ox<=x<ox+64 and oy<=y<oy+80)
+                    self.assertEqual(authored.get_at((x-ox,y-oy)),color)
+
+    def test_brann_face_cluster_never_enters_a_movable_part_slice(self):
+        source=pygame.image.load(str(game.resource_path(
+            'assets/characters/party_battle_v6.png'))).convert_alpha()
+        authored=source.subsurface(pygame.Rect(3*64,0,64,80))
+        body=self.g.combat_body_sheet.subsurface(
+            combat_poses.body_source_rect(3))
+        ox,oy=combat_poses.BODY_CELL_OFFSET
+        face=pygame.Rect(32,4,12,16)
+        retained=0
+        for y in range(face.top,face.bottom):
+            for x in range(face.left,face.right):
+                color=authored.get_at((x,y))
+                if not color.a:continue
+                retained+=1
+                self.assertEqual(color,body.get_at((x+ox,y+oy)))
+        self.assertGreater(retained,180)
+
+    def test_merek_high_ready_uses_three_quarter_shoulder_anchors(self):
+        slices=combat_poses.ARM_SLICES[1]
+        self.assertEqual((34,30),slices['rear'].pivot)
+        self.assertEqual((34,28),slices['front'].pivot)
+        self.assertEqual((34,28),slices['weapon'].pivot)
+        # The face core must remain owned by the permanent body layer.
+        source=pygame.image.load(str(game.resource_path(
+            'assets/characters/party_battle_v6.png'))).convert_alpha()
+        authored=source.subsurface(pygame.Rect(64,0,64,80))
+        body=self.g.combat_body_sheet.subsurface(
+            combat_poses.body_source_rect(1))
+        ox,oy=combat_poses.BODY_CELL_OFFSET
+        for y in range(7,19):
+            for x in range(26,36):
+                color=authored.get_at((x,y))
+                if color.a:self.assertEqual(color,body.get_at((x+ox,y+oy)))
 
     def test_all_melee_states_reuse_the_unchanged_base_body(self):
         g=self.battle()
@@ -317,12 +381,22 @@ class SeamlessTests(unittest.TestCase):
                          pygame.image.tostring(self.g.combat_body_sheet,'RGBA'))
         self.assertEqual(pygame.image.tostring(arms,'RGBA'),
                          pygame.image.tostring(self.g.combat_arm_sheet,'RGBA'))
+        walk_image=build_walk_atlas()
+        battle_image=build_battle_atlas()
+        overworld=pygame.image.fromstring(walk_image.tobytes(),
+                                          walk_image.size,'RGBA')
+        battle_ready=pygame.image.fromstring(battle_image.tobytes(),
+                                             battle_image.size,'RGBA')
+        self.assertEqual(pygame.image.tostring(overworld,'RGBA'),
+                         pygame.image.tostring(self.g.party_sheet,'RGBA'))
+        self.assertEqual(pygame.image.tostring(battle_ready,'RGBA'),
+                         pygame.image.tostring(self.g.battle_ready_sheet,'RGBA'))
 
     def test_tess_uses_split_idle_but_rian_jump_state_triggers(self):
         g=self.battle();pawn=g.world.heroes[2];target=g.world.active.pawns[0]
         self.assertEqual('split-arm',pawn.animation_state)
-        pawn.x,pawn.y=70,105;pawn.home=pawn.pos
-        target.x,target.y=230,90;target.home=target.pos
+        pawn.x,pawn.y=140,210;pawn.home=pawn.pos
+        target.x,target.y=460,180;target.home=target.pos
         pawn.unit.atb=100;g.world.target=target.unit
         g.world.queue_action(pawn.unit,'Attack')
         g.world.update(.1)
@@ -332,14 +406,70 @@ class SeamlessTests(unittest.TestCase):
         g.world.update(.22)
         self.assertEqual('downward_landing_strike',pawn.animation_state)
 
-    def test_idle_battle_pose_differs_from_exploration_and_draws_weapon(self):
+    def test_contact_swaps_exploration_array_for_battle_ready_art(self):
         g=self.battle();pawn=g.world.heroes[0]
         pawn.moving=False;g.turn_actor=-1
-        g.canvas.fill((0,0,0,0));g.state='field';g.world.draw_pawn(pawn)
-        field=pygame.image.tostring(g.canvas,'RGBA')
-        g.canvas.fill((0,0,0,0));g.state='battle';g.world.phase='idle';g.world.draw_pawn(pawn)
-        stance=pygame.image.tostring(g.canvas,'RGBA')
-        self.assertNotEqual(field,stance)
+        with patch.object(g,'draw_party_member') as field_draw, \
+             patch.object(g.world,'draw_battle_ready') as battle_draw:
+            g.state='field';g.world.draw_pawn(pawn)
+            field_draw.assert_called_once();battle_draw.assert_not_called()
+            field_draw.reset_mock();g.state='battle';g.world.phase='idle'
+            g.world.draw_pawn(pawn)
+            battle_draw.assert_called_once();field_draw.assert_not_called()
+
+    def test_high_detail_grid_and_atlases_have_native_geometry(self):
+        self.assertEqual(64,render_config.WORLD_GRID)
+        self.assertEqual((640,360),(game.W,game.H))
+        self.assertEqual((96,96),(combat_poses.COMBAT_CELL_W,
+                                  combat_poses.COMBAT_CELL_H))
+        source=pygame.image.load(str(game.resource_path(
+            'assets/characters/party_battle_v6.png'))).convert_alpha()
+        for hero in range(4):
+            authored=source.subsurface(pygame.Rect(hero*64,0,64,80))
+            self.assertGreaterEqual(authored.get_bounding_rect().height,60)
+            body=self.g.combat_body_sheet.subsurface(
+                combat_poses.body_source_rect(hero))
+            self.assertGreaterEqual(body.get_bounding_rect().height,60)
+        self.assertEqual((32*96,4*96),self.g.party_sheet.get_size())
+        self.assertEqual((4*96,4*96),self.g.battle_ready_sheet.get_size())
+
+    def test_authored_overworld_exposes_every_direction_and_frame(self):
+        for hero in range(4):
+            for direction in range(4):
+                for frame in range(8):
+                    rect=self.g.party_source_rect(hero,direction,frame)
+                    self.assertEqual((96,96),rect.size)
+                    self.assertTrue(self.g.party_sheet.get_rect().contains(rect))
+                    self.assertGreater(pygame.mask.from_surface(
+                        self.g.party_sheet.subsurface(rect)).count(),0)
+
+    def test_battle_ready_atlas_exposes_every_direction(self):
+        for hero in range(4):
+            for direction in range(4):
+                rect=self.g.battle_ready_source_rect(hero,direction)
+                self.assertEqual((96,96),rect.size)
+                self.assertTrue(self.g.battle_ready_sheet.get_rect().contains(rect))
+                self.assertGreater(pygame.mask.from_surface(
+                    self.g.battle_ready_sheet.subsurface(rect)).count(),0)
+
+    def test_map_collision_and_tactical_slots_share_the_64_pixel_grid(self):
+        g=self.field()
+        self.assertTrue(all(value%(render_config.WORLD_GRID//2)==0
+                            for _,point in g.world.exits() for value in point))
+        self.assertTrue(all(value%(render_config.WORLD_GRID//2)==0
+                            for chest in g.treasure[g.room] for value in chest.pos))
+        patrol=g.world.patrols[0];g.world.contact=patrol
+        g.start_battle([p.unit.key for p in patrol.pawns]);self.settle()
+        for pawn in g.world.heroes:
+            self.assertEqual(0,round(pawn.goal[0])%(render_config.WORLD_GRID//2))
+            self.assertEqual(0,round(pawn.goal[1])%render_config.WORLD_GRID)
+
+    def test_offline_atlas_builder_never_resizes_source_character_art(self):
+        for module in ('tools.build_combat_layers',
+                       'tools.build_authored_stance_atlases'):
+            source=inspect.getsource(__import__(module,fromlist=['*']))
+            self.assertNotIn('transform.scale',source)
+            self.assertNotIn('smoothscale',source)
 
     def test_battle_track_starts_on_contact_and_stops_on_final_enemy(self):
         g=self.field();g.music_ready=True

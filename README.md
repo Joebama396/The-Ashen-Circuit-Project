@@ -50,8 +50,8 @@ still fails, share `~/.local/state/ashen-circuit/launcher.log` and
 Enemies patrol the dungeon visibly. Touch one and the same room enters combat:
 the party runs to spread-out positions, then the active-time clocks begin. There
 is no separate arena or camera cut. At contact, each party pawn switches from its
-32×48 exploration source array to its native-size 64×64 layered combat array
-without changing its canvas pixel ratio. Every party member has a visible colored
+96x96 large exploration array to its native 96x96 layered combat array. Both
+contain raw 64x80 character art without changing its pixel ratio. Every party member has a visible colored
 ATB bar in the lower-right panel. A white outline and selection arrow mean that
 character is ready for input. LB/RB switches between ready characters.
 
@@ -76,20 +76,30 @@ ownership of the player's command interface: open menus remain visible and
 navigable, and a command confirmed during an enemy animation is queued to begin
 as soon as that animation finishes.
 
-Every party pawn exposes a named animation state and frame. Exploration sets
-`moving_up`, `moving_down`, `moving_left`, or `moving_right` while cycling the
-eight arm-sway walk frames. Combat swaps to two true-size transparent atlases:
-`party_combat_bodies_v2.png` supplies fixed, continuous bodies and
-`party_combat_arms_v2.png` supplies distinct rear-arm and front-arm/weapon
-frames. Stance changes only select new arm source rectangles; the body source
-rectangle never moves or changes. Every frame is blitted 1:1 with no runtime
-rotation, magnification, or procedural weapon geometry.
+Every party pawn exposes a named animation state and frame. The engine now uses
+a 640x360 native world canvas and one 64-pixel map/collision grid in exploration
+and combat. Tactical lanes may use half-cell offsets, but every door, chest,
+blocker, patrol home, and formation candidate derives from that shared grid.
 
-`tools/build_combat_layers.py` is the only place that transforms the larger
-authored `party_battle_v6.png` source. It bakes the locked shoulder pivots,
-angles, offsets, and hand attachments into the runtime PNGs ahead of time. This
-keeps the poses reproducible while preventing asset-authoring operations from
-leaking into the render loop.
+Exploration sets `moving_up`, `moving_down`, `moving_left`, or `moving_right`
+while selecting eight-frame arrays from
+`party_overworld_hd_v2.png`. Its 96x96 transparent cells contain the approved
+four-frame walk cycles repeated once for the existing eight-frame timing
+contract, with every character aligned to the shared ground anchor.
+
+Combat idle states use the front, rear, and left/right profiles in
+`party_battle_ready_hd_v1.png`. Attacks swap to
+`party_combat_bodies_hd_v1.png` and `party_combat_arms_hd_v1.png`. Each 96x96
+cell contains the authored 64x80 battle art at its original size plus
+transparent weapon clearance. The body, rear arm, front arm/hand, and weapon
+remain independent source rectangles for attacks. Every character frame is
+blitted 1:1 with no runtime magnification or procedural weapon geometry.
+
+`tools/build_combat_layers.py` is an offline authoring tool. It preserves the
+64x80 battle-source resolution, bakes locked shoulder pivots, angles, offsets,
+hand attachments, and weapon placement into the transparent attack atlases.
+`tools/build_authored_stance_atlases.py` packs the approved walk
+and battle-ready sheets. Neither tool runs while packaging or playing the game.
 
 Rian idles in `low_sword_ready`; a long-range jump chains `jump_start` into
 `overhead_raise` and `downward_landing_strike`. Marek idles in `high_ready`, fires
@@ -111,15 +121,16 @@ Normal patrols return when you leave and re-enter their rooms. Repair Drones
 always drop a Potion, allowing supply farming. Bosses and treasure do not respawn.
 Enemy strength increases by region to account for permanent character growth.
 
-The approved overworld character designs are unchanged. Their eight-frame walk
-cycles alternate legs and arms while adding restrained coat-pleat and long-hair
-follow-through. Exploration and combat now share a single native pixel scale:
-one sprite pixel equals one 320×180 canvas pixel for every party member. Enemy
-art remains a code-drawn baseline, animated and mobile in combat. All gameplay
+The former small walk cycles remain as source/reference art, but the runtime now
+uses large temporary overworld frames so future high-detail directional walks
+can be installed without another engine refactor. Exploration and combat share
+one native pixel scale: one character-atlas pixel equals one 640x360 world-canvas
+pixel. Only the finished canvas and the established UI overlay are integer-scaled
+for the 1280x720 window. Enemy art remains a code-drawn baseline. All gameplay
 screenshots are PNGs.
 
 Dialogue, field prompts, combat messages, commands, HP/MP values, and ATB panels
-now use a high-contrast 5x7 pixel alphabet designed for the native 320x180 canvas.
+now use a high-contrast 5x7 pixel alphabet on an integer-scaled 320x180 UI layer.
 The field menu layout is intentionally unchanged in this pass.
 
 ## Treasure replaces leveling

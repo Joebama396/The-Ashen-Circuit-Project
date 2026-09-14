@@ -5,12 +5,13 @@ VERSION="${ASHEN_VERSION:-1.3}"
 export PYTHONPATH="$ROOT/vendor${PYTHONPATH:+:$PYTHONPATH}"
 cd "$ROOT"
 mkdir -p build dist AppDir
-# The checked-in v2 PNG atlases are authoritative runtime art. Packaging never
+# The checked-in HD PNG atlases are authoritative runtime art. Packaging never
 # regenerates, slices, masks, rotates, or otherwise mutates character pixels.
 python3 -m PyInstaller --noconfirm --clean --onefile --windowed --name ashen-circuit \
-  --add-data "assets/characters/party_motion_v1.png:assets/characters" \
-  --add-data "assets/characters/party_combat_bodies_v2.png:assets/characters" \
-  --add-data "assets/characters/party_combat_arms_v2.png:assets/characters" \
+  --add-data "assets/characters/party_overworld_hd_v2.png:assets/characters" \
+  --add-data "assets/characters/party_battle_ready_hd_v1.png:assets/characters" \
+  --add-data "assets/characters/party_combat_bodies_hd_v1.png:assets/characters" \
+  --add-data "assets/characters/party_combat_arms_hd_v1.png:assets/characters" \
   --add-data "assets/audio/battle_theme_1.mp3:assets/audio" \
   game.py
 mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
