@@ -30,9 +30,14 @@ class RianTransparencyTests(unittest.TestCase):
             'rian_hurt_recoil': (192, 64),
             'rian_sword_basic_upward_slash': (256, 64),
         }
-        paths = [path for path in battle_dir.glob('rian_*.png')
-                 if any(path.name.startswith(prefix) for prefix in expected)]
+        directions = ('front_down', 'back_up', 'profile_right')
+        paths = []
+        for prefix, (width, height) in expected.items():
+            paths.extend(
+                battle_dir / f'{prefix}_{direction}_{width}x{height}.png'
+                for direction in directions)
         self.assertEqual(15, len(paths))
+        self.assertTrue(all(path.is_file() for path in paths))
 
         for path in paths:
             with self.subTest(asset=path.name):
