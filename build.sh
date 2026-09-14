@@ -7,11 +7,16 @@ cd "$ROOT"
 mkdir -p build dist AppDir
 # The checked-in HD PNG atlases are authoritative runtime art. Packaging never
 # regenerates, slices, masks, rotates, or otherwise mutates character pixels.
+animation_data=()
+if [[ -f assets/characters/rian_battle_animations_hd_v1.png ]]; then
+  animation_data=(--add-data "assets/characters/rian_battle_animations_hd_v1.png:assets/characters")
+fi
 python3 -m PyInstaller --noconfirm --clean --onefile --windowed --name ashen-circuit \
   --add-data "assets/characters/party_overworld_hd_v2.png:assets/characters" \
   --add-data "assets/characters/party_battle_ready_hd_v1.png:assets/characters" \
   --add-data "assets/characters/party_combat_bodies_hd_v1.png:assets/characters" \
   --add-data "assets/characters/party_combat_arms_hd_v1.png:assets/characters" \
+  "${animation_data[@]}" \
   --add-data "assets/audio/battle_theme_1.mp3:assets/audio" \
   --add-data "assets/audio/menu_theme.mp3:assets/audio" \
   game.py
