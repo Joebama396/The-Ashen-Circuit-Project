@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import itertools
 import math
 import pygame
+from battle_animations import BATTLE_CLIPS, BattleAnimationAtlas
 from combat_poses import (HERO_COMBAT_PROFILES, RIAN_PROFILE, MAREK_PROFILE,
                           TESS_PROFILE, BRANN_PROFILE, CombatSpriteRig)
 from pixel_ui import label, panel
@@ -58,6 +59,9 @@ class Pawn:
     animation_state: str = 'idle'
     animation_frame: int = 0
     animation_time: float = 0.
+    animation_clip: str = ''
+    animation_priority: int = 0
+    animation_finished: bool = False
     body_source_rect: object = None
     rear_arm_source_rect: object = None
     front_arm_source_rect: object = None
@@ -93,6 +97,8 @@ class WorldCombat:
         self.enemy_factory=enemy_factory
         self.link_tech=link_tech
         self.combat_rig=CombatSpriteRig(game.combat_body_sheet,game.combat_arm_sheet)
+        self.battle_animation_atlas=(BattleAnimationAtlas(game.battle_animation_sheet)
+                                     if game.battle_animation_sheet is not None else None)
         self.battle_ready_sheet=game.battle_ready_sheet
         # Kept as public aliases for sprite/debug tooling. Rendering ownership
         # lives in CombatSpriteRig rather than the world/body draw loop.
@@ -138,6 +144,9 @@ class WorldCombat:
         if p.animation_state!=state:
             p.animation_state=state
             p.animation_time=0.
+        p.animation_clip=''
+        p.animation_priority=0
+        p.animation_finished=False
         if frame is None:
             if state in MOVING_STATES.values():
                 frame=int(p.animation_time*10)%8
@@ -147,6 +156,45 @@ class WorldCombat:
             p.rear_arm_source_rect=self.combat_rig.arm_rect(p.hero,state,'rear')
             p.front_arm_source_rect=self.combat_rig.arm_rect(p.hero,state,'front')
             p.weapon_source_rect=self.combat_rig.arm_rect(p.hero,state,'weapon')
+
+    def has_battle_clips(self,p):
+        """Rian owns the first full-frame atlas; other heroes keep their rigs."""
+        return self.battle_animation_atlas is not None and p.hero==0
+
+    def set_battle_clip(self,p,name,restart=False,force=False):
+        if not self.has_battle_clips(p) or name not in BATTLE_CLIPS:return False
+        requested=BATTLE_CLIPS[name]
+        active=BATTLE_CLIPS.get(p.animation_clip)
+        if (not force and active and not p.animation_finished and
+                active.priority>requested.priority):
+            return False
+        changed=p.animation_clip!=name or restart
+        p.animation_clip=name
+        p.animation_state=name
+        p.animation_priority=requested.priority
+        if changed:
+            p.animation_time=0.
+            p.animation_frame=requested.start
+            p.animation_finished=False
+        return True
+
+    def update_battle_clip(self,p):
+        clip=BATTLE_CLIPS.get(p.animation_clip)
+        if not clip:return
+        p.animation_frame,p.animation_finished=clip.sample(p.animation_time)
+        if p.animation_finished and clip.next_clip:
+            self.set_battle_clip(p,clip.next_clip,force=True)
+
+    def battle_clip_active(self,p,minimum_priority=1):
+        clip=BATTLE_CLIPS.get(p.animation_clip)
+        return bool(clip and clip.priority>=minimum_priority and
+                    (not p.animation_finished or clip.hold_last))
+
+    def battle_clip_hit_ready(self,p):
+        clip=BATTLE_CLIPS.get(p.animation_clip)
+        if not clip or clip.impact_frame<0:return False
+        frame,_=clip.sample(p.animation_time)
+        return frame>=clip.start+clip.impact_frame
 
     def set_walk_animation(self,p):
         self.set_animation(p,MOVING_STATES[p.direction] if p.moving else 'idle')
@@ -559,7 +607,11 @@ class WorldCombat:
                      'hit':False,'link':link,'enemy':False,'melee':melee,'motions':motions,
                      'resolve':lambda: g.resolve_link(command) if link else g.resolve_command(hero,command)}
         for p,motion in zip(actors,motions):
-            if motion=='jump' and p.profile in (RIAN_PROFILE,TESS_PROFILE):
+            if self.has_battle_clips(p):
+                clip=('battle_dash' if command not in SUPPORT and
+                      motion in ('run','jump') else 'battle_idle')
+                self.set_battle_clip(p,clip,restart=True,force=True)
+            elif motion=='jump' and p.profile in (RIAN_PROFILE,TESS_PROFILE):
                 self.set_animation(p,'jump_start',0)
             elif command not in SUPPORT and p.profile is MAREK_PROFILE:
                 self.set_animation(p,'extended_isosceles',0)
@@ -627,7 +679,16 @@ class WorldCombat:
     def refresh_battle_animations(self):
         acting=self.action['actors'] if self.action else ()
         for p in self.heroes:
-            if not p.unit.alive() or p in acting:continue
+            if p in acting:continue
+            if self.has_battle_clips(p):
+                if not p.unit.alive():self.set_battle_clip(p,'defeated')
+                elif p.animation_clip=='defeated':
+                    self.set_battle_clip(p,'battle_idle',restart=True,force=True)
+                elif self.battle_clip_active(p,2):continue
+                elif p.moving:self.set_battle_clip(p,'battle_dash')
+                else:self.set_battle_clip(p,'battle_idle')
+                continue
+            if not p.unit.alive():continue
             if self.phase=='forming' and p.moving:self.set_walk_animation(p)
             else:self.set_animation(p,p.profile.idle_state,0)
 
@@ -699,7 +760,9 @@ class WorldCombat:
                     for p in foes:
                         target=min(self.heroes,key=lambda h:distance(h.pos,p.pos))
                         p.direction=1 if target.x>p.x else 3
-            if g.state in ('battle','victory'):self.refresh_battle_animations()
+            if g.state in ('battle','victory'):
+                self.refresh_battle_animations()
+                for p in self.heroes:self.update_battle_clip(p)
 
     def update_action(self, dt):
         a=self.action
@@ -725,7 +788,15 @@ class WorldCombat:
             p.moving=distance(old,p.pos)>.1
             if p.moving:p.direction=facing(old,p.pos)
             elif a['targets']:p.direction=facing(p.pos,a['targets'][0].pos)
-            if (not a['enemy'] and motion=='jump' and
+            if not a['enemy'] and self.has_battle_clips(p):
+                if a['name'] in SUPPORT:clip='battle_idle'
+                else:
+                    attack='sword_basic' if a['name']=='Attack' else 'sword_skill'
+                    clip=(('battle_dash' if motion in ('run','jump') else 'battle_idle')
+                          if t<.34 else
+                          'battle_dash' if t>=.64 and p.moving else attack)
+                self.set_battle_clip(p,clip)
+            elif (not a['enemy'] and motion=='jump' and
                 p.profile in (RIAN_PROFILE,TESS_PROFILE)):
                 state=('jump_start' if t<.10 else 'overhead_raise' if t<.30
                        else 'downward_landing_strike' if t<.64 else p.profile.idle_state)
@@ -741,15 +812,30 @@ class WorldCombat:
                 self.set_animation(p,'downward_landing_strike',0)
             elif p.moving:self.set_walk_animation(p)
             else:self.set_animation(p,p.profile.idle_state if p.profile else 'attack_cast',0)
-        if t>=.46 and not a['hit']:
+        animated_impacts=[p for p in a['actors']
+                          if self.has_battle_clips(p) and
+                          BATTLE_CLIPS.get(p.animation_clip) and
+                          BATTLE_CLIPS[p.animation_clip].impact_frame>=0]
+        hit_ready=(all(self.battle_clip_hit_ready(p) for p in animated_impacts)
+                   if animated_impacts else t>=.46)
+        if hit_ready and not a['hit']:
             a['hit']=True
             everyone=self.heroes+self.active.pawns
             before=[(p,p.unit.hp,p.unit.mp if p.hero>=0 else 0) for p in everyone]
             a['resolve']()
             for p,hp,mp in before:
                 delta=p.unit.hp-hp
-                if delta:self.floaters.append({'pos':p.pos,'value':f'+{delta}' if delta>0 else str(-delta),
-                                               'color':GREEN if delta>0 else WHITE,'ttl':1.05})
+                if delta:
+                    self.floaters.append({'pos':p.pos,'value':f'+{delta}' if delta>0 else str(-delta),
+                                          'color':GREEN if delta>0 else WHITE,'ttl':1.05})
+                    if delta<0 and p.hero>=0 and self.has_battle_clips(p):
+                        self.set_battle_clip(
+                            p,'hurt' if p.unit.alive() else 'defeated',
+                            restart=True,force=True)
+                    elif (delta>0 and p.hero>=0 and self.has_battle_clips(p) and
+                          p.animation_clip=='defeated'):
+                        self.set_battle_clip(
+                            p,'battle_idle',restart=True,force=True)
                 elif p.hero>=0 and p.unit.mp>mp:
                     self.floaters.append({'pos':p.pos,'value':f'+{p.unit.mp-mp}MP','color':CYAN,'ttl':1.05})
         if t>=1:
@@ -1000,8 +1086,13 @@ class WorldCombat:
                 (not self.busy or self.enemy_action_active)):
                 pygame.draw.ellipse(s,ELEMENT_COLORS[p.hero],(x-22,ground_y-6,44,12),2)
                 pygame.draw.polygon(s,GOLD,[(x-5,y-92),(x+5,y-92),(x,y-86)])
-            if p.unit.alive():
-                combat_rig=(g.state in ('battle','victory') and self.phase!='forming')
+            combat_rig=(g.state in ('battle','victory') and self.phase!='forming')
+            full_frame=(combat_rig and self.has_battle_clips(p) and
+                        p.animation_clip in BATTLE_CLIPS)
+            if full_frame:
+                self.battle_animation_atlas.draw(
+                    s,p.animation_frame,x,y,p.direction==1)
+            elif p.unit.alive():
                 if combat_rig:
                     if p.animation_state==p.profile.idle_state:
                         self.draw_battle_ready(p,x,y)

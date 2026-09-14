@@ -76,6 +76,23 @@ decoupled combat body/arm atlases remain active for attacks, recoil, and jump
 sequences. Both sets are baked at the same character scale as the corresponding
 overworld sprites.
 
+## `rian_animation_master.png`
+
+- Source canvas: 1856x64 pixels
+- Frame: 64x64 pixels
+- Total: 29 frames in one horizontal row
+- Order: overworld idle (4), overworld walk (4), battle idle (4), battle dash
+  (4), sword basic (4), sword skill (4), hurt (3), defeated (2)
+- Chroma key: solid `#ff00ff`
+
+`tools/build_battle_animation_atlas.py` validates the exact source geometry,
+removes the magenta key, and pads every frame into a transparent 96x96 runtime
+cell at the shared `(48, 88)` ground anchor. It never resizes authored pixels.
+The generated `rian_battle_animations_hd_v1.png` is optional until the final
+master art is checked in; the existing modular battle rig remains the fallback.
+Clip timing, loops, impact frames, recovery transitions, and interrupt priorities
+are defined in `battle_animations.py`.
+
 ## `party_battle_reference_v5.png`
 
 The full-resolution battle reference establishing costume, weapon, palette,

@@ -140,6 +140,11 @@ class Game(ProgressionMixin):
   self.battle_ready_sheet=pygame.image.load(str(resource_path('assets/characters/party_battle_ready_hd_v1.png'))).convert_alpha()
   self.combat_body_sheet=pygame.image.load(str(resource_path('assets/characters/party_combat_bodies_hd_v1.png'))).convert_alpha()
   self.combat_arm_sheet=pygame.image.load(str(resource_path('assets/characters/party_combat_arms_hd_v1.png'))).convert_alpha()
+  battle_animation_path=resource_path('assets/characters/rian_battle_animations_hd_v1.png')
+  # The full-frame motion atlas is optional until final art is checked in.
+  # Existing combat poses remain the lossless fallback during that handoff.
+  self.battle_animation_sheet=(pygame.image.load(str(battle_animation_path)).convert_alpha()
+                               if Path(battle_animation_path).is_file() else None)
   self.state='title';self.party=new_party();self.room='gate';self.prev=None;self.px,self.py=320,220;self.facing=0
   self.flags=set();self.open_locks=set();self.keys=0;self.gold=0;self.items={'Potion':5,'Ether':2,'Phoenix Gear':1,'Bomb':1}
   self.weapon=0;self.armor=0;self.steps=0;self.dialog=[];self.dindex=0;self.room_menu=0

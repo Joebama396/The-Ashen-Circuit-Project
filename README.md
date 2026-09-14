@@ -81,6 +81,22 @@ a 640x360 native world canvas and one 64-pixel map/collision grid in exploration
 and combat. Tactical lanes may use half-cell offsets, but every door, chest,
 blocker, patrol home, and formation candidate derives from that shared grid.
 
+Rian also has an optional data-driven full-frame animation pipeline. Its source
+contract is `assets/characters/rian_animation_master.png`: one 1856x64 row of
+29 contiguous 64x64 frames in this exact order:
+`overworld_idle(4)`, `overworld_walk(4)`, `battle_idle(4)`,
+`battle_dash(4)`, `sword_basic(4)`, `sword_skill(4)`, `hurt(3)`, and
+`defeated(2)`. Run `python tools/build_battle_animation_atlas.py` to remove the
+magenta chroma key and pad those cells into the existing 96x96 runtime contract
+without scaling. The generated `rian_battle_animations_hd_v1.png` loads
+automatically when present; otherwise the modular pose rig remains active.
+
+Clip ranges, delta-time frame durations, looping, follow-up states, impact-frame
+metadata, and interrupt priorities live in `battle_animations.py`. Basic attacks
+select `sword_basic`, offensive skills select `sword_skill`, approach/return
+movement selects `battle_dash`, incoming damage can interrupt with `hurt`, and
+`defeated` has the highest priority and holds the prone frame.
+
 Exploration sets `moving_up`, `moving_down`, `moving_left`, or `moving_right`
 while selecting eight-frame arrays from
 `party_overworld_hd_v2.png`. Its 96x96 transparent cells contain the approved
