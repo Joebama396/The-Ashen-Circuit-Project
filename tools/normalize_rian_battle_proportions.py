@@ -31,7 +31,7 @@ RUNTIME_CELL = 96
 SCALE_FACTORS = {
     ("guard", "front_down"): Fraction(1, 1),
     ("guard", "back_up"): Fraction(11, 12),
-    ("guard", "profile_right"): Fraction(8, 5),
+    ("guard", "profile_right"): Fraction(1, 1),
     ("hurt", "front_down"): Fraction(7, 6),
     ("hurt", "back_up"): Fraction(11, 12),
     ("hurt", "profile_right"): Fraction(7, 6),
@@ -40,7 +40,7 @@ SCALE_FACTORS = {
     # cells; enlarging them again would make Rian jump in size during attacks.
     ("slash", "front_down"): Fraction(1, 1),
     ("slash", "back_up"): Fraction(1, 1),
-    ("slash", "profile_right"): Fraction(8, 5),
+    ("slash", "profile_right"): Fraction(1, 1),
 }
 
 
