@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 try:
@@ -20,24 +21,37 @@ class RianTransparencyTests(unittest.TestCase):
     def tearDownClass(cls):
         pygame.quit()
 
-    def test_cleanup_handles_near_magenta_and_edge_white(self):
-        source = pygame.Surface((7, 7))
-        source.fill((249, 3, 249))
-        pygame.draw.line(source, (253, 253, 253), (0, 0), (6, 0))
-        pygame.draw.rect(source, (15, 20, 30), (2, 2, 3, 3))
-        source.set_at((3, 3), (255, 255, 255))
+    def test_source_strips_use_true_alpha_and_native_cell_sizes(self):
+        battle_dir = Path(game.__file__).parent / 'assets' / 'characters' / 'battle'
+        expected = {
+            'rian_battle_guard_walk': (256, 64),
+            'rian_battle_idle': (256, 64),
+            'rian_fainted': (64, 64),
+            'rian_hurt_recoil': (192, 64),
+            'rian_sword_basic_upward_slash': (256, 64),
+        }
+        paths = [path for path in battle_dir.glob('rian_*.png')
+                 if any(path.name.startswith(prefix) for prefix in expected)]
+        self.assertEqual(15, len(paths))
 
-        cleaned = game.prepare_rian_battle_sheet(source)
+        for path in paths:
+            with self.subTest(asset=path.name):
+                prefix = next(name for name in expected
+                              if path.name.startswith(name))
+                sheet = pygame.image.load(str(path))
+                self.assertEqual(expected[prefix], sheet.get_size())
+                self.assertTrue(sheet.get_masks()[3])
+                alphas = [sheet.get_at((x, y)).a
+                          for y in range(sheet.get_height())
+                          for x in range(sheet.get_width())]
+                self.assertIn(0, alphas)
+                self.assertIn(255, alphas)
 
-        self.assertEqual(0, cleaned.get_at((0, 0)).a)
-        self.assertEqual(0, cleaned.get_at((0, 3)).a)
-        self.assertEqual(255, cleaned.get_at((3, 3)).a)
-
-    def test_every_loaded_rian_animation_has_transparent_matte(self):
+    def test_every_loaded_rian_animation_keeps_its_transparent_matte(self):
         with patch.object(game.Game, 'make_music', side_effect=pygame.error):
             instance = game.Game()
 
-        self.assertGreaterEqual(len(instance.battle_directional_sheets), 15)
+        self.assertEqual(15, len(instance.battle_directional_sheets))
         for name, sheet in instance.battle_directional_sheets.items():
             with self.subTest(animation=name):
                 width, height = sheet.get_size()
@@ -46,15 +60,19 @@ class RianTransparencyTests(unittest.TestCase):
                     self.assertEqual(0, sheet.get_at(point).a)
 
                 opaque = 0
-                chroma = 0
+                forbidden_matte = 0
                 for y in range(height):
                     for x in range(width):
                         color = sheet.get_at((x, y))
                         if color.a:
                             opaque += 1
-                            chroma += int(game._rian_chroma_pixel(color))
+                            rgb = color[:3]
+                            forbidden_matte += int(
+                                rgb in ((43, 49, 58), (61, 68, 78)) or
+                                (rgb[0] >= 180 and rgb[2] >= 180 and
+                                 rgb[1] <= 96 and abs(rgb[0] - rgb[2]) <= 64))
                 self.assertGreater(opaque, 100)
-                self.assertEqual(0, chroma)
+                self.assertEqual(0, forbidden_matte)
 
     def test_rendered_frame_does_not_overwrite_background_with_matte(self):
         with patch.object(game.Game, 'make_music', side_effect=pygame.error):

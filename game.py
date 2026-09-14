@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os, sys, json, math, random
 from array import array
-from collections import deque
 from pathlib import Path
 import pygame
 from defeat_screen import FADE_SECONDS, draw_defeat_screen
@@ -47,54 +46,6 @@ CYAN=(75,211,214); GOLD=(232,175,66); RED=(201,66,73); GREEN=(76,177,101); PURPL
 # Grid spacing is shared by collision and both character render loops. There is
 # deliberately no character scale table: source pixels are always blitted 1:1.
 FOLLOWER_DX,FOLLOWER_DY=WORLD_GRID,WORLD_GRID//2
-
-def _rian_chroma_pixel(color):
- """Match the magenta matte even after lossy color conversion."""
- r,g,b=color[:3]
- return r>=180 and b>=180 and g<=96 and abs(r-b)<=64
-
-def _rian_edge_matte_pixel(color):
- """Match only the near-white matte found along some strip edges."""
- r,g,b=color[:3]
- return min(r,g,b)>=248 and max(r,g,b)-min(r,g,b)<=8
-
-def prepare_rian_battle_sheet(source):
- """Return a per-pixel-alpha Rian strip with exterior mattes removed.
-
- The generated source strips contain several near-magenta values instead of
- one exact #FF00FF key.  A few also contain near-white bands at the exterior.
- Magenta is safe to remove globally because it is not in Rian's palette;
- white is removed only while connected to an image edge so hair, steel and
- sword highlights remain opaque.
- """
- sheet=pygame.Surface(source.get_size(),pygame.SRCALPHA,32)
- sheet.blit(source,(0,0))
- width,height=sheet.get_size()
-
- # Clear every chroma shade, including compression/quantization variants.
- for y in range(height):
-  for x in range(width):
-   color=sheet.get_at((x,y))
-   if _rian_chroma_pixel(color):sheet.set_at((x,y),(color.r,color.g,color.b,0))
-
- # Flood only from the outside when removing the occasional white matte.
- frontier=deque()
- seen=bytearray(width*height)
- for x in range(width):
-  frontier.append((x,0));frontier.append((x,height-1))
- for y in range(1,height-1):
-  frontier.append((0,y));frontier.append((width-1,y))
- while frontier:
-  x,y=frontier.popleft();index=y*width+x
-  if seen[index]:continue
-  seen[index]=1;color=sheet.get_at((x,y))
-  if color.a and not _rian_edge_matte_pixel(color):continue
-  if color.a:sheet.set_at((x,y),(color.r,color.g,color.b,0))
-  if x:frontier.append((x-1,y))
-  if x+1<width:frontier.append((x+1,y))
-  if y:frontier.append((x,y-1))
-  if y+1<height:frontier.append((x,y+1))
- return sheet
 
 def clamp(v,a,b): return max(a,min(b,v))
 def text(s,font,color=WHITE): return font.render(str(s),False,color)
@@ -193,12 +144,13 @@ class Game(ProgressionMixin):
   battle_animation_path=resource_path('assets/characters/rian_battle_animations_hd_v1.png')
   # The full-frame motion atlas is optional until final art is checked in.
   # Existing combat poses remain the lossless fallback during that handoff.
-  self.battle_animation_sheet=(prepare_rian_battle_sheet(pygame.image.load(str(battle_animation_path)))
+  self.battle_animation_sheet=(pygame.image.load(str(battle_animation_path)).convert_alpha()
                                if Path(battle_animation_path).is_file() else None)
   battle_dir_root=resource_path('assets/characters/battle')
   self.battle_directional_sheets={}
   def load_battle_strip(path):
-   return prepare_rian_battle_sheet(pygame.image.load(str(path)))
+   # These authored strips contain real transparency; preserve it verbatim.
+   return pygame.image.load(str(path)).convert_alpha()
   for key in ('front_down','back_up','profile_right'):
    path=Path(battle_dir_root)/f'rian_battle_guard_walk_{key}_256x64.png'
    if not path.is_file(): path=Path(battle_dir_root)/f'rian_battle_dash_{key}_256x64.png'
