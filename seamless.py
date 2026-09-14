@@ -1104,7 +1104,8 @@ class WorldCombat:
                         p.animation_clip in BATTLE_CLIPS)
             directional=self._directional_frame(p) if combat_rig else None
             if directional is not None:
-                sheet, local_frame, sheet_key=directional
+                sheet, local_frame=directional
+                sheet_key=self._directional_key(p)
                 src=scaled_directional_frame(sheet,local_frame,sheet_key)
                 # Anchor the expanded transparent frame at the same ground
                 # point.  Weapon and coat pixels can extend beyond the old cell
@@ -1143,22 +1144,25 @@ class WorldCombat:
                 pygame.draw.ellipse(s,RED,(x-14,y-4,28,8),1)
                 pygame.draw.polygon(s,WHITE,[(x-3,y-39),(x+3,y-39),(x,y-35)])
 
-    def _directional_frame(self,p):
-        """Return an authored 64px directional strip frame when available."""
-        if p.hero!=0 or p.animation_clip not in ('battle_idle','battle_dash','sword_basic','hurt','defeated'):
-            return None
+    def _directional_key(self,p):
+        """Return the stable asset key used for selection and display scale."""
         prefix={'sword_basic':'sword_basic_','battle_idle':'battle_idle_',
                 'hurt':'hurt_','defeated':'defeated_'}.get(p.animation_clip,'')
         direction=('back_up' if p.direction==0 else
                    'front_down' if p.direction==2 else 'profile_right')
-        sheet_key=prefix+direction
-        sheet=self.battle_directional_sheets.get(sheet_key)
+        return prefix+direction
+
+    def _directional_frame(self,p):
+        """Return an authored 64px directional strip frame when available."""
+        if p.hero!=0 or p.animation_clip not in ('battle_idle','battle_dash','sword_basic','hurt','defeated'):
+            return None
+        sheet=self.battle_directional_sheets.get(self._directional_key(p))
         if sheet is None:return None
         clip=BATTLE_CLIPS[p.animation_clip]
         # Stationary battle idle is deliberately a held guard pose.  Motion is
         # reserved for battle_dash, whose four frames supply the guarded walk.
         local_frame=0 if p.animation_clip in ('battle_idle','defeated') else p.animation_frame-clip.start
-        return sheet,local_frame,sheet_key
+        return sheet,local_frame
 
     def draw_scene(self, hud=True):
         self.draw_ground()

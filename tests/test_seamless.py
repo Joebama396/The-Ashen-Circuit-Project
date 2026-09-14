@@ -13,6 +13,7 @@ os.environ['SDL_AUDIODRIVER']='dummy'
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT']='1'
 import pygame
 import game
+import battle_animations
 import combat_poses
 import render_config
 from tools.build_authored_stance_atlases import (build_battle_atlas,
@@ -276,14 +277,18 @@ class SeamlessTests(unittest.TestCase):
         g.world.set_animation(pawn,'extended_isosceles')
         self.assertEqual(before,g.world.combat_body_source_rect(pawn))
 
-    def test_runtime_character_renderer_is_strictly_one_to_one(self):
+    def test_runtime_character_renderer_only_scales_flagged_rian_strips(self):
         g=self.battle();pawn=g.world.heroes[0]
         self.assertFalse(hasattr(game,'CHARACTER_SCALE'))
-        with patch('pygame.transform.scale') as resize:
+        real_scale=pygame.transform.scale
+        with patch('pygame.transform.scale',wraps=real_scale) as resize:
             g.canvas.fill((0,0,0,0));g.world.draw_pawn(pawn)
-            self.assertFalse(resize.called)
+            key=g.world._directional_key(pawn)
+            expected=1 if battle_animations.rian_directional_scale(key)!=1.0 else 0
+            self.assertEqual(expected,resize.call_count)
+            battle_calls=resize.call_count
             g.state='field';g.canvas.fill((0,0,0,0));g.world.draw_pawn(pawn)
-            self.assertFalse(resize.called)
+            self.assertEqual(battle_calls,resize.call_count)
 
     def test_runtime_combat_rig_only_blits_locked_atlas_frames(self):
         source=inspect.getsource(combat_poses.CombatSpriteRig)
