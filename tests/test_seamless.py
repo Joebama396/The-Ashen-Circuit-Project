@@ -13,7 +13,6 @@ os.environ['SDL_AUDIODRIVER']='dummy'
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT']='1'
 import pygame
 import game
-import battle_animations
 import combat_poses
 import render_config
 from tools.build_authored_stance_atlases import (build_battle_atlas,
@@ -211,8 +210,34 @@ class SeamlessTests(unittest.TestCase):
     def test_named_idle_combat_stances_match_each_character_role(self):
         g=self.battle()
         self.assertEqual(
-            ['battle_dash','high_ready','split-arm','low_ready'],
+            ['battle_idle','high_ready','split-arm','low_ready'],
             [p.animation_state for p in g.world.heroes])
+
+    def test_battle_roam_waits_between_short_walks(self):
+        g=self.battle();pawns=g.world.heroes+g.world.active.pawns
+        for pawn in pawns:
+            pawn.roam_wait=4.;pawn.roam_goal=();pawn.moving=False
+        before=[pawn.pos for pawn in pawns]
+
+        g.world.battle_roam(1.)
+
+        self.assertEqual(before,[pawn.pos for pawn in pawns])
+        self.assertTrue(all(not pawn.moving for pawn in pawns))
+        self.assertTrue(all(pawn.roam_wait==3. for pawn in pawns))
+
+        rian=g.world.heroes[0]
+        rian.roam_wait=0.
+        for pawn in pawns[1:]:pawn.roam_wait=100.
+        with patch('seamless.random.uniform',side_effect=[0.,4.,4.]):
+            g.world.battle_roam(.1)
+            self.assertTrue(rian.moving)
+            self.assertNotEqual(before[0],rian.pos)
+            for _ in range(8):
+                g.world.battle_roam(.1)
+                if not rian.roam_goal:break
+        self.assertFalse(rian.moving)
+        self.assertEqual((),rian.roam_goal)
+        self.assertEqual(4.,rian.roam_wait)
 
     def test_arm_source_rects_change_without_swapping_the_body_rect(self):
         g=self.battle();pawn=g.world.heroes[0]
@@ -277,18 +302,14 @@ class SeamlessTests(unittest.TestCase):
         g.world.set_animation(pawn,'extended_isosceles')
         self.assertEqual(before,g.world.combat_body_source_rect(pawn))
 
-    def test_runtime_character_renderer_only_scales_flagged_rian_strips(self):
+    def test_runtime_character_renderer_is_strictly_one_to_one(self):
         g=self.battle();pawn=g.world.heroes[0]
         self.assertFalse(hasattr(game,'CHARACTER_SCALE'))
-        real_scale=pygame.transform.scale
-        with patch('pygame.transform.scale',wraps=real_scale) as resize:
+        with patch('pygame.transform.scale') as resize:
             g.canvas.fill((0,0,0,0));g.world.draw_pawn(pawn)
-            key=g.world._directional_key(pawn)
-            expected=1 if battle_animations.rian_directional_scale(key)!=1.0 else 0
-            self.assertEqual(expected,resize.call_count)
-            battle_calls=resize.call_count
+            self.assertFalse(resize.called)
             g.state='field';g.canvas.fill((0,0,0,0));g.world.draw_pawn(pawn)
-            self.assertEqual(battle_calls,resize.call_count)
+            self.assertFalse(resize.called)
 
     def test_runtime_combat_rig_only_blits_locked_atlas_frames(self):
         source=inspect.getsource(combat_poses.CombatSpriteRig)

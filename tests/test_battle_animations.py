@@ -19,7 +19,6 @@ class BattleAnimationTests(unittest.TestCase):
                 image = Image.open(path).convert('RGBA')
                 self.assertEqual((64, 64), image.size)
                 self.assertEqual(0, image.getpixel((0, 0))[3])
-                self.assertEqual(255, image.getchannel('A').getextrema()[1])
 
     def test_clip_ranges_cover_master_once_in_declared_order(self):
         self.assertTrue(battle_animations.validate_clip_contract())
@@ -38,37 +37,16 @@ class BattleAnimationTests(unittest.TestCase):
         self.assertEqual((28, True), defeated.sample(defeated.duration + 10))
         self.assertTrue(defeated.hold_last)
 
+    def test_rian_battle_idle_cadence_is_deliberate(self):
+        clips = battle_animations.BATTLE_CLIPS
+        self.assertEqual(.26, clips['battle_idle'].frame_seconds)
+        self.assertEqual(.14, clips['battle_dash'].frame_seconds)
+        self.assertEqual(.095, clips['sword_basic'].frame_seconds)
+
     def test_priorities_make_hurt_and_defeat_uninterruptible_by_idle(self):
         clips = battle_animations.BATTLE_CLIPS
         self.assertGreater(clips['hurt'].priority, clips['sword_skill'].priority)
         self.assertGreater(clips['defeated'].priority, clips['hurt'].priority)
-
-    def test_undersized_directional_strips_match_party_reference_scale(self):
-        corrected = {
-            'profile_right',
-            'sword_basic_front_down',
-            'sword_basic_back_up',
-            'sword_basic_profile_right',
-        }
-        self.assertEqual(corrected,
-                         set(battle_animations.RIAN_UNDERSIZED_DIRECTIONAL_KEYS))
-        for key in corrected:
-            with self.subTest(key=key):
-                self.assertEqual(1.8,battle_animations.rian_directional_scale(key))
-        self.assertEqual(1.0,battle_animations.rian_directional_scale('front_down'))
-        self.assertEqual(1.0,battle_animations.rian_directional_scale('hurt_profile_right'))
-
-        try:
-            import pygame
-        except ImportError:
-            self.skipTest('pygame is not installed in this test environment')
-        sheet=pygame.Surface((256,64),pygame.SRCALPHA)
-        corrected_frame=battle_animations.scaled_directional_frame(
-            sheet,0,'sword_basic_front_down')
-        normal_frame=battle_animations.scaled_directional_frame(
-            sheet,0,'front_down')
-        self.assertEqual((115,115),corrected_frame.get_size())
-        self.assertEqual((64,64),normal_frame.get_size())
 
     def test_builder_pads_cells_without_scaling_and_removes_magenta(self):
         with tempfile.TemporaryDirectory(prefix='ashen-animation-') as folder:

@@ -6,9 +6,9 @@ every actor retains its room coordinates when an encounter begins.
 from dataclasses import dataclass, field
 import itertools
 import math
+import random
 import pygame
-from battle_animations import (BATTLE_CLIPS, BattleAnimationAtlas,
-                               scaled_directional_frame)
+from battle_animations import BATTLE_CLIPS, BattleAnimationAtlas
 from combat_poses import (HERO_COMBAT_PROFILES, RIAN_PROFILE, MAREK_PROFILE,
                           TESS_PROFILE, BRANN_PROFILE, CombatSpriteRig)
 from pixel_ui import label, panel
@@ -31,6 +31,12 @@ SINGLE={'Attack', 'Frost Edge', 'Rail Shot', 'Venom Cut', 'Corrode', 'Wither',
         'Nerve Toxin', 'Shaped Charge', 'Bomb', 'Cryotoxin', 'Thermal Fracture',
         'Neuroshock'}
 MELEE={'Attack', 'Frost Edge', 'Venom Cut', 'Cryotoxin', 'Thermal Fracture'}
+
+# Combatants make brief positional adjustments, then hold their stance for a
+# few seconds.  This keeps the battlefield alive without making every actor
+# look as though they are constantly pacing.
+BATTLE_ROAM_IDLE_MIN=3.0
+BATTLE_ROAM_IDLE_MAX=5.0
 
 
 def distance(a, b):
@@ -63,6 +69,8 @@ class Pawn:
     animation_clip: str = ''
     animation_priority: int = 0
     animation_finished: bool = False
+    roam_wait: float = 0.
+    roam_goal: tuple = field(default_factory=tuple)
     body_source_rect: object = None
     rear_arm_source_rect: object = None
     front_arm_source_rect: object = None
@@ -451,6 +459,10 @@ class WorldCombat:
             h.guard=False;h.atb=(28,16,22,12)[i] if h.alive() else 0;h.ready_stamp=0
         for i,p in enumerate(self.active.pawns):
             p.unit.atb=18+i*9;p.unit.ready_stamp=0
+        for index,p in enumerate(self.heroes+self.active.pawns):
+            p.roam_goal=()
+            span=BATTLE_ROAM_IDLE_MAX-BATTLE_ROAM_IDLE_MIN
+            p.roam_wait=BATTLE_ROAM_IDLE_MIN+(index*.71)%span
         self.phase='forming';self.phase_time=0.
         self.stage_party()
 
@@ -698,25 +710,30 @@ class WorldCombat:
                     self.set_battle_clip(p,'battle_idle',restart=True,force=True)
                 elif self.battle_clip_active(p,2):continue
                 elif p.moving:self.set_battle_clip(p,'battle_dash')
-                else:self.set_battle_clip(p,'battle_idle')
+                else:self.set_battle_clip(
+                    p,'battle_idle',force=p.animation_clip=='battle_dash')
                 continue
             if not p.unit.alive():continue
             if self.phase=='forming' and p.moving:self.set_walk_animation(p)
             else:self.set_animation(p,p.profile.idle_state,0)
 
     def battle_roam(self,dt):
-        """Everyone keeps their footing and shifts around the shared arena."""
+        """Make short arena adjustments separated by long stationary pauses."""
         if not self.active:return
         acting=self.action['actors'] if self.action else ()
         pawns=self.heroes+self.active.pawns
         for index,p in enumerate(pawns):
             if any(p is actor for actor in acting) or not p.unit.alive():continue
-            phase=self.clock*(.68+(index%3)*.08)+index*1.9
-            radius=4 if p.hero>=0 else 6
-            goal=self.clamp_point((p.home[0]+math.sin(phase)*radius,
-                                    p.home[1]+math.sin(phase*.73+1.2)*3))
+            if not p.roam_goal:
+                p.moving=False
+                p.roam_wait=max(0.,p.roam_wait-dt)
+                if p.roam_wait>0:continue
+                angle=random.uniform(0.,math.tau)
+                radius=random.uniform(3.,4. if p.hero>=0 else 6.)
+                p.roam_goal=self.clamp_point((p.home[0]+math.cos(angle)*radius,
+                                              p.home[1]+math.sin(angle)*radius*.65))
             saved=(p.x,p.y,p.direction,p.moving)
-            p.step(goal,(12 if p.hero>=0 else 15)*dt)
+            reached=p.step(p.roam_goal,(12 if p.hero>=0 else 15)*dt)
             mask,anchor=self.collision_mask(p)
             origin=(int(p.x-anchor[0]),int(p.y-anchor[1]))
             blocked=False
@@ -728,7 +745,15 @@ class WorldCombat:
                 if mask.overlap(other_mask,(other_origin[0]-origin[0],
                                             other_origin[1]-origin[1])):
                     blocked=True;break
-            if blocked:p.x,p.y,p.direction,p.moving=saved
+            if blocked:
+                p.x,p.y,p.direction,_=saved
+                p.moving=False;p.roam_goal=()
+                p.roam_wait=random.uniform(BATTLE_ROAM_IDLE_MIN,
+                                           BATTLE_ROAM_IDLE_MAX)
+            elif reached:
+                p.moving=False;p.roam_goal=()
+                p.roam_wait=random.uniform(BATTLE_ROAM_IDLE_MIN,
+                                           BATTLE_ROAM_IDLE_MAX)
 
     def update(self, dt):
         self.clock+=dt
@@ -853,6 +878,9 @@ class WorldCombat:
         if t>=1:
             for p,end in zip(a['actors'],a['endings']):
                 p.x,p.y=end;p.home=end;p.goal=end;p.moving=False;p.air=0
+                p.roam_goal=()
+                p.roam_wait=random.uniform(BATTLE_ROAM_IDLE_MIN,
+                                           BATTLE_ROAM_IDLE_MAX)
             self.action=None;self.phase='idle'
             if self.g.state=='battle':
                 if a['enemy']:
@@ -1105,13 +1133,12 @@ class WorldCombat:
             directional=self._directional_frame(p) if combat_rig else None
             if directional is not None:
                 sheet, local_frame=directional
-                sheet_key=self._directional_key(p)
-                src=scaled_directional_frame(sheet,local_frame,sheet_key)
-                # Anchor the expanded transparent frame at the same ground
-                # point.  Weapon and coat pixels can extend beyond the old cell
-                # without being clipped or shifting Rian's feet.
-                s.blit(src,(round(x-src.get_width()/2),
-                            round(y-src.get_height())))
+                # Directional actions may use the full 96px actor cell so wide
+                # poses never have to compress Rian to fit a 64px source box.
+                frame_size=sheet.get_height()
+                src=sheet.subsurface(pygame.Rect(
+                    local_frame*frame_size,0,frame_size,frame_size))
+                s.blit(src,(round(x-frame_size/2),round(y-frame_size)))
             elif full_frame:
                 self.battle_animation_atlas.draw(
                     s,p.animation_frame,x,y,p.direction==1)
@@ -1144,19 +1171,18 @@ class WorldCombat:
                 pygame.draw.ellipse(s,RED,(x-14,y-4,28,8),1)
                 pygame.draw.polygon(s,WHITE,[(x-3,y-39),(x+3,y-39),(x,y-35)])
 
-    def _directional_key(self,p):
-        """Return the stable asset key used for selection and display scale."""
-        prefix={'sword_basic':'sword_basic_','battle_idle':'battle_idle_',
-                'hurt':'hurt_','defeated':'defeated_'}.get(p.animation_clip,'')
-        direction=('back_up' if p.direction==0 else
-                   'front_down' if p.direction==2 else 'profile_right')
-        return prefix+direction
-
     def _directional_frame(self,p):
-        """Return an authored 64px directional strip frame when available."""
+        """Return an authored square-cell directional strip frame when available."""
         if p.hero!=0 or p.animation_clip not in ('battle_idle','battle_dash','sword_basic','hurt','defeated'):
             return None
-        sheet=self.battle_directional_sheets.get(self._directional_key(p))
+        prefix={'sword_basic':'sword_basic_','battle_idle':'battle_idle_',
+                'hurt':'hurt_','defeated':'defeated_'}.get(p.animation_clip,'')
+        if p.direction==0:
+            sheet=self.battle_directional_sheets.get(prefix+'back_up')
+        elif p.direction==2:
+            sheet=self.battle_directional_sheets.get(prefix+'front_down')
+        else:
+            sheet=self.battle_directional_sheets.get(prefix+'profile_right')
         if sheet is None:return None
         clip=BATTLE_CLIPS[p.animation_clip]
         # Stationary battle idle is deliberately a held guard pose.  Motion is

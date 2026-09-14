@@ -15,46 +15,6 @@ MASTER_FRAME_H = 64
 MASTER_FRAME_COUNT = 29
 RUNTIME_FRAME_COUNT = MASTER_FRAME_COUNT
 
-# The four strips below were exported with Rian at roughly 5/9 of the body
-# scale used by party_overworld_hd_v2.png.  Scale only after extracting a
-# 64x64 frame: this retains the complete sword/cape silhouette instead of
-# clipping enlarged pixels back into the source cell.
-DIRECTIONAL_FRAME_W = 64
-DIRECTIONAL_FRAME_H = 64
-RIAN_PARTY_REFERENCE_SCALE = 1.8
-RIAN_UNDERSIZED_DIRECTIONAL_KEYS = frozenset({
-    'profile_right',
-    'sword_basic_front_down',
-    'sword_basic_back_up',
-    'sword_basic_profile_right',
-})
-
-
-def rian_directional_scale(key):
-    """Return the display correction for an authored directional strip."""
-    return (RIAN_PARTY_REFERENCE_SCALE
-            if key in RIAN_UNDERSIZED_DIRECTIONAL_KEYS else 1.0)
-
-
-def scaled_directional_frame(sheet, frame, key):
-    """Extract a frame, then apply Rian's measured pixel-perfect correction."""
-    import pygame
-    if sheet.get_height() != DIRECTIONAL_FRAME_H or sheet.get_width() % DIRECTIONAL_FRAME_W:
-        raise ValueError(f'Directional strip must contain 64x64 cells, got {sheet.get_size()}')
-    frame_count = sheet.get_width() // DIRECTIONAL_FRAME_W
-    if not 0 <= frame < frame_count:
-        raise IndexError(f'Directional frame {frame} is outside 0..{frame_count - 1}')
-    image = sheet.subsurface(pygame.Rect(frame * DIRECTIONAL_FRAME_W, 0,
-                                         DIRECTIONAL_FRAME_W, DIRECTIONAL_FRAME_H))
-    scale = rian_directional_scale(key)
-    if scale == 1.0:
-        return image
-    size = (round(DIRECTIONAL_FRAME_W * scale),
-            round(DIRECTIONAL_FRAME_H * scale))
-    # pygame.transform.scale is nearest-neighbour; smoothscale is intentionally
-    # avoided so the corrected sprite keeps hard 1:1-style pixel clusters.
-    return pygame.transform.scale(image, size)
-
 
 @dataclass(frozen=True)
 class AnimationClip:
@@ -93,8 +53,13 @@ class AnimationClip:
 BATTLE_CLIPS = {
     'overworld_idle': AnimationClip('overworld_idle', 0, 4, .18, loop=True),
     'overworld_walk': AnimationClip('overworld_walk', 4, 4, .10, loop=True),
-    'battle_idle': AnimationClip('battle_idle', 8, 4, .16, loop=True),
-    'battle_dash': AnimationClip('battle_dash', 12, 4, .075, loop=True, priority=1),
+    # Rian's stationary guard is intentionally unhurried.  The directional
+    # renderer holds its first frame, while this slower cadence also governs
+    # any atlas-backed idle playback.
+    'battle_idle': AnimationClip('battle_idle', 8, 4, .26, loop=True),
+    # This clip is the visible "Battle Idle: Moving" guarded walk.  A 140ms
+    # frame delay reads as deliberate footwork instead of a rushed shuffle.
+    'battle_dash': AnimationClip('battle_dash', 12, 4, .14, loop=True, priority=1),
     'sword_basic': AnimationClip('sword_basic', 16, 4, .095, priority=2,
                                  next_clip='battle_idle', impact_frame=1),
     'sword_skill': AnimationClip('sword_skill', 20, 4, .11, priority=3,
