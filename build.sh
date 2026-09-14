@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-VERSION="${ASHEN_VERSION:-1.8}"
+VERSION="${ASHEN_VERSION:-1.9}"
 export PYTHONPATH="$ROOT/vendor${PYTHONPATH:+:$PYTHONPATH}"
 cd "$ROOT"
 mkdir -p build dist AppDir

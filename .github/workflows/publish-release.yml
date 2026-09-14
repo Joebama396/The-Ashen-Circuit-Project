@@ -7,7 +7,7 @@ on:
       - main
     paths:
       - .github/workflows/publish-release.yml
-      - RELEASE_NOTES_v1.8.md
+      - RELEASE_NOTES_v1.9.md
       - START_HERE.txt
       - build.sh
       - ashen-circuit.spec
@@ -23,15 +23,15 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-v1.8
+  group: publish-v1.9
   cancel-in-progress: false
 
 jobs:
   build-and-release:
     runs-on: ubuntu-24.04
     env:
-      RELEASE_TAG: v1.8
-      RELEASE_VERSION: 1.8
+      RELEASE_TAG: v1.9
+      RELEASE_VERSION: 1.9
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -99,12 +99,12 @@ jobs:
           )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
-              --title "The Ashen Circuit v1.8" \
-              --notes-file RELEASE_NOTES_v1.8.md
+              --title "The Ashen Circuit v1.9" \
+              --notes-file RELEASE_NOTES_v1.9.md
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
             gh release create "$RELEASE_TAG" "${assets[@]}" \
               --target "$GITHUB_SHA" \
-              --title "The Ashen Circuit v1.8" \
-              --notes-file RELEASE_NOTES_v1.8.md
+              --title "The Ashen Circuit v1.9" \
+              --notes-file RELEASE_NOTES_v1.9.md
           fi
