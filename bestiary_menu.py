@@ -83,12 +83,13 @@ class BestiaryMenu:
     """Browse monster records and hide undiscovered entries."""
 
     def __init__(self, *, monsters=None, discovered=None, preview_provider=None,
-                 on_enter=None, on_exit=None):
+                 on_enter=None, on_exit=None, play_sfx=None):
         self.monsters = tuple(monsters or MONSTER_ENTRIES)
         self.discovered = discovered or (lambda: set())
         self.preview_provider = preview_provider or (lambda key: None)
         self.on_enter = on_enter or (lambda: None)
         self.on_exit = on_exit or (lambda: None)
+        self.play_sfx = play_sfx or (lambda name: None)
         self.selected_index = 0
         self.axis_latch = [0, 0]
         self.elapsed = 0.0
@@ -136,9 +137,12 @@ class BestiaryMenu:
         key = self._key_from_event(event)
         if key in (pygame.K_UP, pygame.K_LEFT, pygame.K_w, pygame.K_a):
             self.selected_index = (self.selected_index - 1) % len(self.monsters)
+            self.play_sfx('cursor')
         elif key in (pygame.K_DOWN, pygame.K_RIGHT, pygame.K_s, pygame.K_d):
             self.selected_index = (self.selected_index + 1) % len(self.monsters)
+            self.play_sfx('cursor')
         elif key in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_x):
+            self.play_sfx('close')
             return TITLE
         return BESTIARY
 

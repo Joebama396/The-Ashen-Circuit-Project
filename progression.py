@@ -207,6 +207,7 @@ class ProgressionMixin:
         key = event.key
         opts = self.bag_options()
         if key in (pygame.K_x, pygame.K_ESCAPE):
+            self.play_ui_sfx('close')
             if self.bag_confirm:
                 self.bag_confirm = False
             elif self.bag_hero is not None:
@@ -215,11 +216,14 @@ class ProgressionMixin:
                 self.state = 'menu'
             return
         if not opts:
+            if key in (pygame.K_z, pygame.K_RETURN, pygame.K_SPACE):
+                self.play_ui_sfx('blocked')
             return
         self.bag_index %= len(opts)
         if key in (pygame.K_UP, pygame.K_LEFT, pygame.K_w, pygame.K_a,
                    pygame.K_DOWN, pygame.K_RIGHT, pygame.K_s, pygame.K_d):
             if self.bag_confirm:
+                self.play_ui_sfx('blocked')
                 return
             delta = -1 if key in (pygame.K_UP, pygame.K_LEFT, pygame.K_w, pygame.K_a) else 1
             if self.bag_hero is None:
@@ -227,16 +231,22 @@ class ProgressionMixin:
             else:
                 self.bag_hero = (self.bag_hero + delta) % 4
             self.bag_message = ''
+            self.play_ui_sfx('cursor')
         elif key in (pygame.K_z, pygame.K_RETURN, pygame.K_SPACE):
             if self.bag_hero is None:
+                self.play_ui_sfx('cursor')
                 self.bag_pending = opts[self.bag_index]
                 self.bag_hero = 0
             elif not self.bag_confirm:
+                self.play_ui_sfx('cursor')
                 self.bag_confirm = True
             else:
-                self.use_field_item(self.bag_pending, self.bag_hero)
-                self.bag_hero = None
-                self.bag_confirm = False
+                if self.use_field_item(self.bag_pending, self.bag_hero):
+                    self.play_ui_sfx('cursor')
+                    self.bag_hero = None
+                    self.bag_confirm = False
+                else:
+                    self.play_ui_sfx('blocked')
 
     def draw_bag(self):
         self.canvas.fill((11, 18, 26))

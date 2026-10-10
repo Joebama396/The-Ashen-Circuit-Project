@@ -544,9 +544,11 @@ class WorldCombat:
         # playing; the choice is dispatched the instant that animation ends.
         if (self.busy and not self.enemy_action_active) or self.g.state!='battle':return
         if not hero.alive() or hero.atb<100:
+            self.g.play_ui_sfx('blocked')
             self.g.log=['That character is still charging.']
             return
         if not self.g.command_available(hero,command,link):
+            self.g.play_ui_sfx('blocked')
             self.g.log=['Technique unavailable: find its tome, charge, or restore MP.']
             return
         if command in SINGLE:
@@ -561,13 +563,16 @@ class WorldCombat:
         if event.type!=pygame.KEYDOWN:return True
         alive=[p.unit for p in self.active.pawns if p.unit.alive()]
         if event.key in (pygame.K_x,pygame.K_ESCAPE):
+            self.g.play_ui_sfx('close')
             self.targeting=None;self.target=None
         elif event.key in (pygame.K_LEFT,pygame.K_UP,pygame.K_a,pygame.K_w,
                             pygame.K_RIGHT,pygame.K_DOWN,pygame.K_d,pygame.K_s):
             index=alive.index(self.target) if self.target in alive else 0
             delta=-1 if event.key in (pygame.K_LEFT,pygame.K_UP,pygame.K_a,pygame.K_w) else 1
+            self.g.play_ui_sfx('cursor')
             self.target=alive[(index+delta)%len(alive)]
         elif event.key in (pygame.K_z,pygame.K_RETURN,pygame.K_SPACE):
+            self.g.play_ui_sfx('cursor')
             h,c,link=self.targeting
             self.targeting=None
             self.queue_action(h,c,link)

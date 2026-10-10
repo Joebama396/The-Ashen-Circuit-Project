@@ -7,15 +7,21 @@ on:
       - main
     paths:
       - .github/workflows/publish-release.yml
-      - RELEASE_NOTES_v1.9.md
+      - RELEASE_NOTES_v1.10.md
       - START_HERE.txt
       - build.sh
       - ashen-circuit.spec
       - game.py
+      - ui_sfx.py
+      - options_menu.py
+      - save_menu.py
+      - title_screen.py
+      - bestiary_menu.py
+      - progression.py
       - seamless.py
       - defeat_screen.py
       - battle_animations.py
-      - assets/audio/game_over.mp3
+      - assets/audio/**
       - assets/characters/battle/**
       - tests/**
 
@@ -23,15 +29,15 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-v1.9
+  group: publish-v1.10
   cancel-in-progress: false
 
 jobs:
   build-and-release:
     runs-on: ubuntu-24.04
     env:
-      RELEASE_TAG: v1.9
-      RELEASE_VERSION: 1.9
+      RELEASE_TAG: v1.10
+      RELEASE_VERSION: 1.10
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -99,12 +105,12 @@ jobs:
           )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
-              --title "The Ashen Circuit v1.9" \
-              --notes-file RELEASE_NOTES_v1.9.md
+              --title "The Ashen Circuit v1.10" \
+              --notes-file RELEASE_NOTES_v1.10.md
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
             gh release create "$RELEASE_TAG" "${assets[@]}" \
               --target "$GITHUB_SHA" \
-              --title "The Ashen Circuit v1.9" \
-              --notes-file RELEASE_NOTES_v1.9.md
+              --title "The Ashen Circuit v1.10" \
+              --notes-file RELEASE_NOTES_v1.10.md
           fi

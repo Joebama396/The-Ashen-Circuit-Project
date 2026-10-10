@@ -75,7 +75,7 @@ class OptionsMenu:
 
     def __init__(self, *, settings_path=None, initial_settings=None,
                  on_music_volume=None, on_sfx_volume=None,
-                 on_battle_system=None, test_sfx=None):
+                 on_battle_system=None, test_sfx=None, play_sfx=None):
         self.settings_path = settings_path
         loaded = load_settings(self._path()) if settings_path else {}
         self.settings = normalize_settings({**(initial_settings or {}), **loaded})
@@ -83,6 +83,7 @@ class OptionsMenu:
         self.on_sfx_volume = on_sfx_volume or (lambda volume: None)
         self.on_battle_system = on_battle_system or (lambda mode: None)
         self.test_sfx = test_sfx or (lambda volume: None)
+        self.play_sfx = play_sfx or (lambda name: None)
         self.selected_index = 0
         self.axis_latch = [0, 0]
         self.elapsed = 0.0
@@ -110,20 +111,29 @@ class OptionsMenu:
             self.on_battle_system(mode)
 
     def _adjust(self, direction):
+        changed = True
         if self.selected_index == 0:
+            old = self.settings['music_volume']
             value = clamp_volume(self.settings['music_volume'] + direction * 10)
             self.settings['music_volume'] = value
             self.on_music_volume(value / 100.0)
+            changed = value != old
         elif self.selected_index == 1:
+            old = self.settings['sfx_volume']
             value = clamp_volume(self.settings['sfx_volume'] + direction * 10)
             self.settings['sfx_volume'] = value
             volume = value / 100.0
             self.on_sfx_volume(volume)
-            self.test_sfx(volume)
+            changed = value != old
         elif self.selected_index == 2:
             mode = 'Wait' if self.settings['battle_system'] == 'Active' else 'Active'
             self.settings['battle_system'] = mode
             self.on_battle_system(mode)
+        else:
+            changed = False
+        self.play_sfx('cursor' if changed else 'blocked')
+        if self.selected_index == 1 and changed:
+            self.test_sfx(self.settings['sfx_volume'] / 100.0)
 
     def _key_from_event(self, event):
         if event.type == pygame.KEYDOWN:
@@ -156,19 +166,26 @@ class OptionsMenu:
             return OPTIONS
         if key in (pygame.K_UP, pygame.K_w):
             self.selected_index = (self.selected_index - 1) % len(self.ITEMS)
+            self.play_sfx('cursor')
         elif key in (pygame.K_DOWN, pygame.K_s):
             self.selected_index = (self.selected_index + 1) % len(self.ITEMS)
+            self.play_sfx('cursor')
         elif key in (pygame.K_LEFT, pygame.K_a):
             self._adjust(-1)
         elif key in (pygame.K_RIGHT, pygame.K_d):
             self._adjust(1)
         elif key in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_x):
             self.save()
+            self.play_sfx('close')
             return TITLE
         elif key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE,
                      pygame.K_z) and self.selected_index == 3:
             self.save()
+            self.play_sfx('close')
             return TITLE
+        elif key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE,
+                     pygame.K_z):
+            self.play_sfx('blocked')
         return OPTIONS
 
     def update(self, dt):

@@ -82,12 +82,13 @@ class SaveMenu:
     """Render and control the three vertical save cards."""
 
     def __init__(self, *, slot_paths=None, data_provider=None, on_load=None,
-                 location_names=None, objective_resolver=None):
+                 location_names=None, objective_resolver=None, play_sfx=None):
         self.slot_paths = slot_paths or (lambda: ())
         self.data_provider = data_provider
         self.on_load = on_load or (lambda slot: False)
         self.location_names = location_names or {}
         self.objective_resolver = objective_resolver
+        self.play_sfx = play_sfx or (lambda name: None)
         self.selected_slot = 0
         self.elapsed = 0.0
         self.slots = []
@@ -119,16 +120,21 @@ class SaveMenu:
             return SAVE_MENU
         if event.key in (pygame.K_UP, pygame.K_w):
             self.selected_slot = (self.selected_slot - 1) % 3
+            self.play_sfx('cursor')
         elif event.key in (pygame.K_DOWN, pygame.K_s):
             self.selected_slot = (self.selected_slot + 1) % 3
+            self.play_sfx('cursor')
         elif event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_x):
+            self.play_sfx('close')
             return TITLE
         elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE,
                            pygame.K_z):
             self.refresh()
             slot = self.slots[self.selected_slot]
             if slot.get('occupied') and self.on_load(self.selected_slot + 1) is not False:
+                self.play_sfx('cursor')
                 return GAMEPLAY
+            self.play_sfx('blocked')
         return SAVE_MENU
 
     def update(self, dt):

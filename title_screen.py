@@ -46,7 +46,8 @@ class TitleScreen:
     def __init__(self, *, on_new_game=None, on_load_game=None,
                  save_exists=None, get_battle_mode=None,
                  toggle_battle_mode=None, music_path=None, save_menu=None,
-                 options_menu=None, bestiary_menu=None, on_exit=None):
+                 options_menu=None, bestiary_menu=None, on_exit=None,
+                 play_sfx=None):
         self.state = TITLE
         self.selected_index = 0
         self.submenu_index = 0
@@ -57,6 +58,7 @@ class TitleScreen:
         self.get_battle_mode = get_battle_mode or (lambda: "Active")
         self.toggle_battle_mode = toggle_battle_mode or (lambda: None)
         self.on_exit = on_exit or graceful_exit
+        self.play_sfx = play_sfx or (lambda name: None)
         self.music_path = Path(music_path) if music_path else None
         self.music_ready = False
         self.music_playing = False
@@ -181,13 +183,17 @@ class TitleScreen:
         if self.state == TITLE:
             if key == pygame.K_n:
                 self.selected_index = 0
+                self.play_sfx('cursor')
                 self._activate_title_choice()
             elif key in (pygame.K_UP, pygame.K_w):
                 self.selected_index = (self.selected_index - 1) % len(MENU_OPTIONS)
+                self.play_sfx('cursor')
             elif key in (pygame.K_DOWN, pygame.K_s):
                 self.selected_index = (self.selected_index + 1) % len(MENU_OPTIONS)
+                self.play_sfx('cursor')
             elif key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE,
                          pygame.K_z):
+                self.play_sfx('cursor')
                 self._activate_title_choice()
         elif self.state == SAVE_MENU:
             next_state = self.save_menu.handle_input(event)

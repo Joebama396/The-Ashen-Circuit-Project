@@ -17,6 +17,7 @@ from render_config import (ACTOR_CELL_H, ACTOR_CELL_W, ACTOR_GROUND_ANCHOR,
 from save_menu import SaveMenu
 from title_screen import (BESTIARY, EXIT, GAMEPLAY, OPTIONS, SAVE_MENU, TITLE,
                           TitleScreen)
+from ui_sfx import UISfx
 
 W,H,SCALE=VIEW_W,VIEW_H,DISPLAY_SCALE
 TILE=WORLD_GRID
@@ -177,6 +178,10 @@ class Game(ProgressionMixin):
   if pygame.joystick.get_count(): self.connect_controller(0)
   self.music_volume=.8;self.sfx_volume=.8
   self.options_test_sound=self.make_options_test_sound()
+  self.ui_sfx=UISfx({
+   'cursor':resource_path('assets/audio/ui_cursor.mp3'),
+   'close':resource_path('assets/audio/ui_close.mp3'),
+   'blocked':resource_path('assets/audio/ui_blocked.mp3')},self.sfx_volume)
   self.music_ready=False;self.battle_music_playing=False;self.bestiary_music_playing=False;self.gameover_music_playing=False
   self.battle_music_path=resource_path('assets/audio/battle_theme_1.mp3')
   self.gameover_music_path=resource_path('assets/audio/game_over.mp3')
@@ -191,15 +196,17 @@ class Game(ProgressionMixin):
    slot_paths=lambda:[save_path_for_slot(slot) for slot in (1,2,3)],
    on_load=self.load_from_title,
    location_names={key:value[0] for key,value in ROOMS.items()},
-   objective_resolver=lambda data:objective_for_progress(data.get('flags',())))
+   objective_resolver=lambda data:objective_for_progress(data.get('flags',())),
+   play_sfx=self.play_ui_sfx)
   options_menu=OptionsMenu(
    settings_path=settings_path,on_music_volume=self.set_music_volume,
    on_sfx_volume=self.set_sfx_volume,on_battle_system=self.set_battle_system,
-   test_sfx=self.play_options_test_sound)
+   play_sfx=self.play_ui_sfx)
   bestiary_menu=BestiaryMenu(
    discovered=lambda:self.discovered_enemies,
    preview_provider=self.bestiary_preview,
-   on_enter=self.start_bestiary_music,on_exit=self.leave_bestiary_music)
+   on_enter=self.start_bestiary_music,on_exit=self.leave_bestiary_music,
+   play_sfx=self.play_ui_sfx)
   self.title_screen=TitleScreen(
    on_new_game=self.new_game,on_load_game=self.load_from_title,
    save_exists=lambda:any(save_path_for_slot(slot).exists() for slot in (1,2,3)),
@@ -207,6 +214,7 @@ class Game(ProgressionMixin):
    get_battle_mode=lambda:self.battle_mode,
    toggle_battle_mode=self.toggle_title_battle_mode,
    on_exit=self.exit_application,
+   play_sfx=self.play_ui_sfx,
    music_path=resource_path('assets/audio/menu_theme.mp3'))
 
  def connect_controller(self,index=0):
@@ -237,6 +245,10 @@ class Game(ProgressionMixin):
  def set_sfx_volume(self,volume):
   self.sfx_volume=clamp(float(volume),0,1)
   if self.options_test_sound:self.options_test_sound.set_volume(self.sfx_volume)
+  if hasattr(self,'ui_sfx'):self.ui_sfx.set_volume(self.sfx_volume)
+
+ def play_ui_sfx(self,name):
+  return self.ui_sfx.play(name) if hasattr(self,'ui_sfx') else False
 
  def set_battle_system(self,mode):
   if mode in ('Wait','Active'):self.battle_mode=mode
@@ -429,7 +441,7 @@ class Game(ProgressionMixin):
 
  def field_input(self,e):
   if e.type==pygame.KEYDOWN:
-   if e.key in (pygame.K_ESCAPE,pygame.K_x):self.state='menu';self.room_menu=0
+   if e.key in (pygame.K_ESCAPE,pygame.K_x):self.play_ui_sfx('cursor');self.state='menu';self.room_menu=0
    if e.key==pygame.K_F5:self.save()
    if e.key in (pygame.K_RETURN,pygame.K_z,pygame.K_SPACE):self.interact()
 
@@ -469,28 +481,30 @@ class Game(ProgressionMixin):
   if not hero.alive():self.select_ready_actor(force=True);return
   if e.type!=pygame.KEYDOWN:return
   if e.key in (pygame.K_q,pygame.K_e):
-   self.cycle_ready_actor(-1 if e.key==pygame.K_q else 1);return
+   if len(self.ready_party())<2:self.play_ui_sfx('blocked')
+   else:self.play_ui_sfx('cursor');self.cycle_ready_actor(-1 if e.key==pygame.K_q else 1)
+   return
   if self.submenu:
    opts=self.get_submenu(hero)
-   if e.key in (pygame.K_UP,pygame.K_w):self.target=(self.target-1)%len(opts)
-   elif e.key in (pygame.K_DOWN,pygame.K_s):self.target=(self.target+1)%len(opts)
-   elif e.key in (pygame.K_RIGHT,pygame.K_d):self.target=(self.target+3)%len(opts)
-   elif e.key in (pygame.K_LEFT,pygame.K_a):self.target=(self.target-3)%len(opts)
-   elif e.key in (pygame.K_ESCAPE,pygame.K_x):self.submenu=None;self.target=0
+   if e.key in (pygame.K_UP,pygame.K_w):self.play_ui_sfx('cursor');self.target=(self.target-1)%len(opts)
+   elif e.key in (pygame.K_DOWN,pygame.K_s):self.play_ui_sfx('cursor');self.target=(self.target+1)%len(opts)
+   elif e.key in (pygame.K_RIGHT,pygame.K_d):self.play_ui_sfx('cursor');self.target=(self.target+3)%len(opts)
+   elif e.key in (pygame.K_LEFT,pygame.K_a):self.play_ui_sfx('cursor');self.target=(self.target-3)%len(opts)
+   elif e.key in (pygame.K_ESCAPE,pygame.K_x):self.play_ui_sfx('close');self.submenu=None;self.target=0
    elif e.key in (pygame.K_RETURN,pygame.K_z,pygame.K_SPACE):self.use_sub(hero,opts[self.target])
   else:
    commands=self.commands(hero)
-   if e.key in (pygame.K_UP,pygame.K_w):self.cmd=(self.cmd-1)%len(commands)
-   elif e.key in (pygame.K_DOWN,pygame.K_s):self.cmd=(self.cmd+1)%len(commands)
-   elif e.key in (pygame.K_LEFT,pygame.K_a,pygame.K_RIGHT,pygame.K_d):self.cmd=(self.cmd+3)%len(commands)
+   if e.key in (pygame.K_UP,pygame.K_w):self.play_ui_sfx('cursor');self.cmd=(self.cmd-1)%len(commands)
+   elif e.key in (pygame.K_DOWN,pygame.K_s):self.play_ui_sfx('cursor');self.cmd=(self.cmd+1)%len(commands)
+   elif e.key in (pygame.K_LEFT,pygame.K_a,pygame.K_RIGHT,pygame.K_d):self.play_ui_sfx('cursor');self.cmd=(self.cmd+3)%len(commands)
    elif e.key in (pygame.K_RETURN,pygame.K_z,pygame.K_SPACE):
     c=commands[self.cmd]
-    if c==hero.skill and not self.knows(hero,c):self.log=['Find the personal technique tome in a chest.'];self.log_wait=35
-    elif c==hero.skill and hero.gauge<100:self.log=[f'{c} is still recharging.'];self.log_wait=35
-    elif c=='Link' and not self.ready_links():self.log=['No Link technique is ready.'];self.log_wait=35
-    elif c in ('Attack','Defend'):self.execute(hero,c)
-    elif c==hero.skill:self.execute(hero,c)
-    else:self.submenu=c;self.target=0
+    if c==hero.skill and not self.knows(hero,c):self.play_ui_sfx('blocked');self.log=['Find the personal technique tome in a chest.'];self.log_wait=35
+    elif c==hero.skill and hero.gauge<100:self.play_ui_sfx('blocked');self.log=[f'{c} is still recharging.'];self.log_wait=35
+    elif c=='Link' and not self.ready_links():self.play_ui_sfx('blocked');self.log=['No Link technique is ready.'];self.log_wait=35
+    elif c in ('Attack','Defend'):self.play_ui_sfx('cursor');self.execute(hero,c)
+    elif c==hero.skill:self.play_ui_sfx('cursor');self.execute(hero,c)
+    else:self.play_ui_sfx('cursor');self.submenu=c;self.target=0
 
  def commands(self,h):return ['Attack',h.skill,'Arts','Link','Item','Defend']
 
@@ -521,14 +535,14 @@ class Game(ProgressionMixin):
   return [f'{k} x{self.items.get(k,0)}' for k in CONSUMABLES if self.items.get(k,0)>0] or ['(Empty)']
 
  def use_sub(self,h,opt):
-  if opt.startswith('('):return
-  if self.submenu=='Link':self.submenu=None;self.execute_link(opt);return
+  if opt.startswith('('):self.play_ui_sfx('blocked');return
+  if self.submenu=='Link':self.play_ui_sfx('cursor');self.submenu=None;self.execute_link(opt);return
   if self.submenu=='Arts':
    name,cost=opt.rsplit(' ',1);cost=int(cost[:-2])
-   if h.mp<cost:self.log=['Not enough MP.'];self.log_wait=35;return
+   if h.mp<cost:self.play_ui_sfx('blocked');self.log=['Not enough MP.'];self.log_wait=35;return
    opt=name
   else:opt=opt.split(' x')[0]
-  self.submenu=None;self.execute(h,opt)
+  self.play_ui_sfx('cursor');self.submenu=None;self.execute(h,opt)
 
  def damage(self,att,target,power,magic=False,element=None):
   stat=att.mag if magic else att.pow; base=stat*power/20+random.randint(-4,5)+self.weapon*5
@@ -720,11 +734,12 @@ class Game(ProgressionMixin):
  def menu_input(self,e):
   if e.type!=pygame.KEYDOWN:return
   opts=self.menu_options()
-  if e.key in (pygame.K_UP,pygame.K_w):self.room_menu=(self.room_menu-1)%len(opts)
-  elif e.key in (pygame.K_DOWN,pygame.K_s):self.room_menu=(self.room_menu+1)%len(opts)
-  elif e.key in (pygame.K_ESCAPE,pygame.K_x):self.state='field'
+  if e.key in (pygame.K_UP,pygame.K_w):self.play_ui_sfx('cursor');self.room_menu=(self.room_menu-1)%len(opts)
+  elif e.key in (pygame.K_DOWN,pygame.K_s):self.play_ui_sfx('cursor');self.room_menu=(self.room_menu+1)%len(opts)
+  elif e.key in (pygame.K_ESCAPE,pygame.K_x):self.play_ui_sfx('close');self.state='field'
   elif e.key in (pygame.K_RETURN,pygame.K_z):
    c=opts[self.room_menu]
+   self.play_ui_sfx('close' if c in ('Save','Return to field') else 'cursor')
    if c=='Items & Growth':self.state='bag';self.bag_hero=None;self.bag_confirm=False;self.bag_message=''
    elif c=='Party & Arts':self.manual_type='party';self.manual_page=0;self.state='manual'
    elif c=='Link Manual':self.manual_type='links';self.manual_page=0;self.state='manual'
@@ -783,9 +798,11 @@ class Game(ProgressionMixin):
   elif self.state=='menu':self.menu_input(e)
   elif self.state=='bag':self.bag_input(e)
   elif self.state=='manual' and e.type==pygame.KEYDOWN:
-   if e.key in (pygame.K_ESCAPE,pygame.K_x):self.state='menu'
-   elif e.key in (pygame.K_LEFT,pygame.K_UP,pygame.K_a,pygame.K_w):self.manual_page=max(0,self.manual_page-1)
-   elif e.key in (pygame.K_RIGHT,pygame.K_DOWN,pygame.K_d,pygame.K_s,pygame.K_z,pygame.K_RETURN):self.manual_page+=1
+   if e.key in (pygame.K_ESCAPE,pygame.K_x):self.play_ui_sfx('close');self.state='menu'
+   elif e.key in (pygame.K_LEFT,pygame.K_UP,pygame.K_a,pygame.K_w):
+    if self.manual_page<=0:self.play_ui_sfx('blocked')
+    else:self.play_ui_sfx('cursor');self.manual_page-=1
+   elif e.key in (pygame.K_RIGHT,pygame.K_DOWN,pygame.K_d,pygame.K_s,pygame.K_z,pygame.K_RETURN):self.play_ui_sfx('cursor');self.manual_page+=1
   elif (self.state=='gameover' and e.type==pygame.KEYDOWN and
         self.gameover_elapsed>=FADE_SECONDS):
    self.load() if self.current_save_path().exists() else self.new_game()
